@@ -1,5 +1,4 @@
 apply plugin: 'com.android.application'
-apply from: '../variables.gradle'
 
 android {
     namespace "com.sereno.app"
