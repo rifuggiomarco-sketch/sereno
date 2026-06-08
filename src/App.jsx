@@ -8,7 +8,7 @@ import {
 import Auth from './components/Auth';
 import { supabase } from './supabase';
 
-/* ─── THEME ──────────────────────────────────────────────── */
+/* ─── THEME ──────────────────────────────────────────────────── */
 const T = {
   cream:      '#f4efe6',
   creamLight: '#faf6ed',
@@ -21,7 +21,7 @@ const T = {
   muted:      '#7a7a5e',
 };
 
-/* ─── STYLES ─────────────────────────────────────────────── */
+/* ─── STYLES ─────────────────────────────────────────────────── */
 function GlobalStyles() {
   return (
     <style>{`
@@ -34,7 +34,6 @@ function GlobalStyles() {
       @keyframes pulse-soft { 0%,100%{opacity:.35} 50%{opacity:.8} }
       @keyframes br-expand  { from{transform:scale(.55)} to{transform:scale(1)} }
       @keyframes br-contract{ from{transform:scale(1)} to{transform:scale(.55)} }
-      .fd { font-family:sans-serif }
       .sway         { animation:sway 4s ease-in-out infinite; transform-origin:bottom }
       .drift        { animation:drift 28s linear infinite }
       .float-up     { animation:float-up 4s ease-out infinite }
@@ -44,58 +43,53 @@ function GlobalStyles() {
       .slide-up     { animation:slide-up .35s cubic-bezier(.22,1,.36,1) forwards }
       .scroll::-webkit-scrollbar { display:none }
       .scroll { -ms-overflow-style:none; scrollbar-width:none }
-      .grain { background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.4'/%3E%3C/svg%3E") }
     `}</style>
   );
 }
 
-/* ─── ROOT ───────────────────────────────────────────────── */
+/* ─── ROOT ───────────────────────────────────────────────────── */
 export default function Sereno() {
-  const [stage, setStage]           = useState('splash');     // splash | auth | main
-  const [session, setSession]       = useState(null);
-  const [screen, setScreen]         = useState('garden');     // garden | insights | modes
-  const [user, setUser]             = useState({
+  const [stage, setStage]     = useState('splash'); // splash | auth | loading | onboarding | main
+  const [session, setSession] = useState(null);
+  const [screen, setScreen]   = useState('garden');
+  const [onbStep, setOnbStep] = useState(0);
+  const [user, setUser]       = useState({
     name:'', relationship:null, vulnerableTimes:[], apps:[],
     intensity:'balanced', activeMode:'famiglia',
   });
 
-  // metrics from supabase
-  const [streak, setStreak]           = useState(0);
-  const [opensToday, setOpensToday]   = useState(0);
-  const [timeMin, setTimeMin]         = useState(0);
-  const [realTrees, setRealTrees]     = useState(0);
+  const [streak,      setStreak]      = useState(0);
+  const [opensToday,  setOpensToday]  = useState(0);
+  const [timeMin,     setTimeMin]     = useState(0);
+  const [realTrees,   setRealTrees]   = useState(0);
   const [friendsData, setFriendsData] = useState([]);
+  const [weeklyMins,  setWeeklyMins]  = useState(Array(7).fill(0));
 
-  // overlays
-  const [pauseApp, setPauseApp]     = useState(null);         // null or app name
-  const [focusSess, setFocusSess]   = useState(null);         // null or {type,duration,flower}
-  const [settingsOpen, setSettings] = useState(false);
-  const [modeSheet, setModeSheet]   = useState(false);
-  const [friendsOpen, setFriends]   = useState(false);
-  const [insTab, setInsTab]         = useState('week');
+  const [pauseApp,     setPauseApp]   = useState(null);
+  const [focusSess,    setFocusSess]  = useState(null);
+  const [settingsOpen, setSettings]   = useState(false);
+  const [modeSheet,    setModeSheet]  = useState(false);
+  const [friendsOpen,  setFriends]    = useState(false);
+  const [insTab,       setInsTab]     = useState('week');
 
-  // Splash auto-advance
   useEffect(() => {
     if (stage !== 'splash') return;
     const t = setTimeout(() => setStage('auth'), 2400);
     return () => clearTimeout(t);
   }, [stage]);
 
-  // Load data from Supabase when session is available
   useEffect(() => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || stage !== 'loading') return;
     const userId = session.user.id;
+    const today  = new Date(); today.setHours(0, 0, 0, 0);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
+    // Profile
     supabase.from('profiles').select('*').eq('id', userId).single()
       .then(({ data: profile, error }) => {
         if (error && error.code === 'PGRST116') {
-          return supabase.from('profiles').insert({
-            id: userId, name: '', streak: 0, trees: 0,
-            intensity: 'balanced', active_mode: 'famiglia'
-          }).select().single().then(({ data }) => data);
+          return supabase.from('profiles')
+            .insert({ id: userId, name:'', streak:0, trees:0, intensity:'balanced', active_mode:'famiglia' })
+            .select().single().then(({ data }) => data);
         }
         return profile;
       })
@@ -105,13 +99,18 @@ export default function Sereno() {
           setRealTrees(profile.trees || 0);
           setUser(u => ({
             ...u,
-            name: profile.name || '',
-            intensity: profile.intensity || 'balanced',
-            activeMode: profile.active_mode || 'famiglia',
+            name:        profile.name || '',
+            intensity:   profile.intensity || 'balanced',
+            activeMode:  profile.active_mode || 'famiglia',
           }));
+          setStage(profile.name ? 'main' : 'onboarding');
+        } else {
+          setStage('onboarding');
         }
-      });
+      })
+      .catch(() => setStage('main'));
 
+    // Sessions today
     supabase.from('sessions').select('duration,completed')
       .eq('user_id', userId).gte('created_at', today.toISOString())
       .then(({ data: sessions }) => {
@@ -121,23 +120,39 @@ export default function Sereno() {
         }
       });
 
+    // Weekly sessions (last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    supabase.from('sessions').select('duration,completed,created_at')
+      .eq('user_id', userId).gte('created_at', sevenDaysAgo.toISOString())
+      .then(({ data: allSessions }) => {
+        if (allSessions) {
+          const byDay = Array(7).fill(0);
+          allSessions.filter(s => s.completed).forEach(s => {
+            const daysAgo = Math.floor((Date.now() - new Date(s.created_at).getTime()) / 86400000);
+            if (daysAgo < 7) byDay[6 - daysAgo] += s.duration;
+          });
+          setWeeklyMins(byDay);
+        }
+      });
+
+    // Friends
     supabase.from('friendships').select('friend_id').eq('user_id', userId)
       .then(async ({ data: friendships }) => {
         if (!friendships?.length) return;
-        const friendIds = friendships.map(f => f.friend_id);
-        const { data: friendProfiles } = await supabase
-          .from('profiles').select('*').in('id', friendIds);
-        if (friendProfiles) {
-          setFriendsData(friendProfiles.map(p => ({
+        const ids = friendships.map(f => f.friend_id);
+        const { data: profiles } = await supabase.from('profiles').select('*').in('id', ids);
+        if (profiles) {
+          setFriendsData(profiles.map(p => ({
             id: p.id, name: p.name || 'Amico',
             streak: p.streak || 0, trees: p.trees || 0,
             avatar: ['🌳','🌲','🌸','🌿','🌻','🌱'][Math.abs((p.name||'A').charCodeAt(0)) % 6],
-            color: ['#c97b5c','#3a5a2e','#c97b94','#8aa66e','#e8a83a','#8aa66e'][Math.abs((p.name||'A').charCodeAt(0)) % 6],
+            color:  ['#c97b5c','#3a5a2e','#c97b94','#8aa66e','#e8a83a','#8aa66e'][Math.abs((p.name||'A').charCodeAt(0)) % 6],
             online: false,
           })));
         }
       });
-  }, [session]);
+  }, [session, stage]);
 
   const hours = Math.floor(timeMin / 60);
   const mins  = timeMin % 60;
@@ -146,114 +161,144 @@ export default function Sereno() {
     setTimeMin(m => m + 8);
     setPauseApp(null);
     if (session?.user?.id) {
-      supabase.from('sessions').insert({
-        user_id: session.user.id, type: 'breath',
-        duration: 8, completed: true,
-      }).then(({ error }) => { if (error) console.error(error); });
+      supabase.from('sessions').insert({ user_id: session.user.id, type:'breath', duration:8, completed:true });
     }
   };
-
   const onSlip = () => {
     setOpensToday(o => o + 1);
     setPauseApp(null);
     if (session?.user?.id) {
-      supabase.from('sessions').insert({
-        user_id: session.user.id, type: 'breath',
-        duration: 0, completed: false,
-      }).then(({ error }) => { if (error) console.error(error); });
+      supabase.from('sessions').insert({ user_id: session.user.id, type:'breath', duration:0, completed:false });
     }
   };
 
-  // what layer is on top?
+  const completeOnboarding = async () => {
+    if (session?.user?.id) {
+      await supabase.from('profiles').upsert({
+        id: session.user.id,
+        name: user.name,
+        streak: 0,
+        trees: 0,
+        intensity: user.intensity,
+        active_mode: user.activeMode,
+      });
+    }
+    setStage('main');
+  };
+
   const busy = !!pauseApp || !!focusSess;
 
   return (
-    <div style={{ minHeight:'100vh', width:'100%', background:'radial-gradient(ellipse at top,#d4c5a9,#8a7c63)', fontFamily:'sans-serif' }}>
+    <div style={{ height:'100vh', width:'100%', overflow:'hidden', background:'radial-gradient(ellipse at top,#d4c5a9,#8a7c63)', fontFamily:'sans-serif' }}>
       <GlobalStyles />
-
       <div style={{ position:'relative', width:'100%', height:'100%', background: screenBg(stage, screen) }}>
 
-            {/* Status bar */}
-            {stage !== 'splash' && <StatusBar dark={stage==='main' && screen==='modes'} />}
+        {stage === 'main' && <StatusBar dark={screen === 'modes'} />}
 
-            {/* ── Layers ── */}
-            {stage === 'splash' && <Splash />}
-            {stage === 'auth' && <Auth onAuthSuccess={(s) => { setSession(s); setStage('main'); }} />}
+        {stage === 'splash'      && <Splash />}
+        {stage === 'auth'        && <Auth onAuthSuccess={s => { setSession(s); setStage('loading'); }} />}
+        {stage === 'loading'     && <LoadingScreen />}
+        {stage === 'onboarding'  && (
+          <Onboarding step={onbStep} setStep={setOnbStep}
+            user={user} setUser={setUser} onComplete={completeOnboarding} />
+        )}
 
-            {stage === 'main' && !busy && (
-              <>
-                {screen === 'garden'   && (
-                  <Garden user={user} streak={streak} opensToday={opensToday}
-                    hours={hours} mins={mins} realTrees={realTrees}
-                    friends={friendsData}
-                    onTriggerPause={app => setPauseApp(app)}
-                    onOpenSettings={() => setSettings(true)}
-                    onOpenModeSheet={() => setModeSheet(true)}
-                    onOpenFriends={() => setFriends(true)}
-                    onStartFocus={(type,duration,flower) => setFocusSess({type,duration,flower})} />
-                )}
-                {screen === 'insights' && (
-                  <Insights tab={insTab} setTab={setInsTab} realTrees={realTrees} />
-                )}
-                {screen === 'modes'    && (
-                  <Modes user={user} setUser={setUser} onOpenFriends={() => setFriends(true)} />
-                )}
-                <BottomNav screen={screen} setScreen={setScreen} dark={screen==='modes'} />
-              </>
+        {stage === 'main' && !busy && (
+          <>
+            {screen === 'garden' && (
+              <Garden user={user} streak={streak} opensToday={opensToday}
+                hours={hours} mins={mins} realTrees={realTrees} friends={friendsData}
+                onTriggerPause={app => setPauseApp(app)}
+                onOpenSettings={() => setSettings(true)}
+                onOpenModeSheet={() => setModeSheet(true)}
+                onOpenFriends={() => setFriends(true)}
+                onStartFocus={(type, duration, flower) => setFocusSess({ type, duration, flower })} />
             )}
-
-            {/* Full-screen overlays (no nav) */}
-            {!!pauseApp && (
-              <PauseOverlay appName={pauseApp} opensToday={opensToday}
-                intensity={user.intensity} onResist={onResist} onSlip={onSlip} />
+            {screen === 'insights' && (
+              <Insights tab={insTab} setTab={setInsTab}
+                realTrees={realTrees} weeklyMins={weeklyMins}
+                streak={streak} timeMin={timeMin} opensToday={opensToday} />
             )}
-            {!!focusSess && (
-              <FocusSession {...focusSess} onEnd={() => {
-                if (session?.user?.id && focusSess) {
-                  supabase.from('sessions').insert({
-                    user_id: session.user.id, type: focusSess.type,
-                    duration: focusSess.duration, flower: focusSess.flower, completed: true,
-                  }).then(({ error }) => { if (error) console.error(error); });
-                  setTimeMin(m => m + focusSess.duration);
-                }
-                setFocusSess(null);
-              }} />
+            {screen === 'modes' && (
+              <Modes user={user} setUser={setUser} friends={friendsData}
+                onOpenFriends={() => setFriends(true)} />
             )}
+            <BottomNav screen={screen} setScreen={setScreen} dark={screen === 'modes'} />
+          </>
+        )}
 
-            {/* Slide-in panels */}
-            {settingsOpen  && <SettingsPanel user={user} setUser={setUser} onClose={() => setSettings(false)} />}
-            {modeSheet     && <ModeSheet user={user} setUser={setUser} onClose={() => setModeSheet(false)} />}
-            {friendsOpen   && <FriendsModal friends={friendsData} onClose={() => setFriends(false)} />}
-          </div>
-        </div>
+        {!!pauseApp && (
+          <PauseOverlay appName={pauseApp} opensToday={opensToday}
+            intensity={user.intensity} onResist={onResist} onSlip={onSlip} />
+        )}
+        {!!focusSess && (
+          <FocusSession {...focusSess} onEnd={() => {
+            if (session?.user?.id && focusSess) {
+              supabase.from('sessions').insert({
+                user_id: session.user.id, type: focusSess.type,
+                duration: focusSess.duration, flower: focusSess.flower, completed: true,
+              });
+              setTimeMin(m => m + focusSess.duration);
+            }
+            setFocusSess(null);
+          }} />
+        )}
+
+        {settingsOpen && <SettingsPanel user={user} setUser={setUser} onClose={() => setSettings(false)} />}
+        {modeSheet    && <ModeSheet user={user} setUser={setUser} onClose={() => setModeSheet(false)} />}
+        {friendsOpen  && (
+          <FriendsModal friends={friendsData} userName={user.name}
+            userId={session?.user?.id || ''} onClose={() => setFriends(false)} />
+        )}
+      </div>
+    </div>
   );
 }
 
 function screenBg(stage, screen) {
-  if (stage === 'splash') return T.green;
-  if (stage === 'main' && screen === 'garden') return '#c4b896';
-  if (stage === 'main' && screen === 'modes')  return T.greenDark;
+  if (stage === 'splash' || stage === 'loading') return T.green;
+  if (stage === 'main' && screen === 'garden')   return '#c4b896';
+  if (stage === 'main' && screen === 'modes')    return T.greenDark;
   return T.cream;
 }
 
-/* ─── STATUS BAR ────────────────────────────────────────── */
+/* ─── STATUS BAR ─────────────────────────────────────────────── */
 function StatusBar({ dark }) {
+  const fmt = () => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  };
+  const [time, setTime] = useState(fmt);
+  useEffect(() => {
+    const iv = setInterval(() => setTime(fmt()), 15000);
+    return () => clearInterval(iv);
+  }, []);
   return (
     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', paddingLeft:'32px', paddingRight:'32px', paddingTop:'12px', paddingBottom:'8px', fontSize:'12px', fontWeight:500, position:'relative', zIndex:30, color: dark ? T.cream : T.ink }}>
-      <span>9:41</span>
+      <span>{time}</span>
       <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)', top:'8px', width:'96px', height:'24px', borderRadius:'9999px', backgroundColor:'black' }} />
       <span>●●●</span>
     </div>
   );
 }
 
-/* ─── SPLASH ─────────────────────────────────────────────── */
+/* ─── LOADING ────────────────────────────────────────────────── */
+function LoadingScreen() {
+  return (
+    <div style={{ position:'absolute', top:0, left:0, right:0, bottom:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+      <Leaf size={32} style={{ color:T.earth, opacity:.7 }} strokeWidth={1.2} />
+      <p style={{ fontSize:13, marginTop:12, color:T.earth, opacity:.6 }}>Caricamento...</p>
+    </div>
+  );
+}
+
+/* ─── SPLASH ─────────────────────────────────────────────────── */
 function Splash() {
   return (
     <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:T.cream }}>
-      <div style={{ animation:'bloom-in 1.4s cubic-bezier(.22,1,.36,1) forwards', textAlign:'center' }}>
+      <div className="bloom-in" style={{ textAlign:'center' }}>
         <div style={{ position:'relative', width:'96px', height:'96px', marginBottom:'24px', display:'flex', alignItems:'center', justifyContent:'center', marginLeft:'auto', marginRight:'auto' }}>
-          <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, borderRadius:'9999px', animation:'pulse-soft 3s ease-in-out infinite', background:'radial-gradient(circle,rgba(212,197,169,.3),transparent 70%)' }} />
+          <div className="pulse-soft" style={{ position:'absolute', top:0, right:0, bottom:0, left:0, borderRadius:'9999px', background:'radial-gradient(circle,rgba(212,197,169,.3),transparent 70%)' }} />
           <Leaf size={48} style={{ color:T.earth }} strokeWidth={1.2} />
         </div>
         <p style={{ fontFamily:'sans-serif', fontSize:'48px', letterSpacing:'-0.025em' }}>Sereno</p>
@@ -263,27 +308,26 @@ function Splash() {
   );
 }
 
-/* ─── ONBOARDING ─────────────────────────────────────────── */
+/* ─── ONBOARDING ─────────────────────────────────────────────── */
 const ONB_STEPS = ['welcome','name','relationship','times','apps','intensity','permission','ready'];
 
 function Onboarding({ step, setStep, user, setUser, onComplete }) {
-  const key = ONB_STEPS[step];
+  const key    = ONB_STEPS[step];
   const isLast = step === ONB_STEPS.length - 1;
 
   const canNext = () => {
-    if (key==='name') return user.name.trim().length > 0;
-    if (key==='relationship') return !!user.relationship;
-    if (key==='times') return user.vulnerableTimes.length > 0;
-    if (key==='apps') return user.apps.length > 0;
+    if (key === 'name')         return user.name.trim().length > 0;
+    if (key === 'relationship') return !!user.relationship;
+    if (key === 'times')        return user.vulnerableTimes.length > 0;
+    if (key === 'apps')         return user.apps.length > 0;
     return true;
   };
 
-  const next = () => isLast ? onComplete() : setStep(s => s+1);
-  const back = () => setStep(s => s-1);
+  const next = () => isLast ? onComplete() : setStep(s => s + 1);
+  const back = () => setStep(s => s - 1);
 
   return (
     <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', flexDirection:'column', paddingLeft:'24px', paddingRight:'24px', paddingBottom:'24px', paddingTop:'8px', background:T.cream }}>
-      {/* Progress bar */}
       {step > 0 && (
         <div style={{ display:'flex', alignItems:'center', gap:'8px', paddingBottom:'16px' }}>
           {step > 1 && <button onClick={back}><ChevronLeft size={20} style={{ color:T.ink }} /></button>}
@@ -294,21 +338,19 @@ function Onboarding({ step, setStep, user, setUser, onComplete }) {
           </div>
         </div>
       )}
-
-      <div style={{ flex:1, overflowY:'auto', MsOverflowStyle:'none', scrollbarWidth:'none', animation:'fade-up .45s ease-out forwards' }} key={key}>
-        {key==='welcome'      && <OnbWelcome />}
-        {key==='name'         && <OnbName user={user} setUser={setUser} />}
-        {key==='relationship' && <OnbRelationship user={user} setUser={setUser} />}
-        {key==='times'        && <OnbTimes user={user} setUser={setUser} />}
-        {key==='apps'         && <OnbApps user={user} setUser={setUser} />}
-        {key==='intensity'    && <OnbIntensity user={user} setUser={setUser} />}
-        {key==='permission'   && <OnbPermission />}
-        {key==='ready'        && <OnbReady user={user} />}
+      <div className="fade-up" key={key} style={{ flex:1, overflowY:'auto', msOverflowStyle:'none', scrollbarWidth:'none' }}>
+        {key === 'welcome'      && <OnbWelcome />}
+        {key === 'name'         && <OnbName user={user} setUser={setUser} />}
+        {key === 'relationship' && <OnbRelationship user={user} setUser={setUser} />}
+        {key === 'times'        && <OnbTimes user={user} setUser={setUser} />}
+        {key === 'apps'         && <OnbApps user={user} setUser={setUser} />}
+        {key === 'intensity'    && <OnbIntensity user={user} setUser={setUser} />}
+        {key === 'permission'   && <OnbPermission />}
+        {key === 'ready'        && <OnbReady user={user} />}
       </div>
-
       <button onClick={next} disabled={!canNext()}
-        style={{ marginTop:'12px', width:'100%', borderRadius:'16px', paddingTop:'16px', paddingBottom:'16px', fontSize:'14px', fontWeight:500, display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', background:canNext()?T.green:'rgba(45,58,46,.18)', color:canNext()?T.cream:'rgba(45,58,46,.35)' }}>
-        {key==='welcome' ? 'Inizia' : isLast ? 'Entra nel giardino' : 'Continua'}
+        style={{ marginTop:'12px', width:'100%', borderRadius:'16px', paddingTop:'16px', paddingBottom:'16px', fontSize:'14px', fontWeight:500, display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', background:canNext()?T.green:'rgba(45,58,46,.18)', color:canNext()?T.cream:'rgba(45,58,46,.35)', border:'none', cursor:canNext()?'pointer':'default' }}>
+        {key === 'welcome' ? 'Inizia' : isLast ? 'Entra nel giardino' : 'Continua'}
         <ArrowRight size={16} />
       </button>
     </div>
@@ -319,16 +361,16 @@ function OnbWelcome() {
   return (
     <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', textAlign:'center' }}>
       <div style={{ position:'relative', width:'112px', height:'112px', marginBottom:'32px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-        <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, borderRadius:'50%', animation:'pulse-soft 3s ease-in-out infinite', background:'radial-gradient(circle,rgba(45,74,62,.15),transparent 70%)' }} />
+        <div className="pulse-soft" style={{ position:'absolute', top:0, right:0, bottom:0, left:0, borderRadius:'50%', background:'radial-gradient(circle,rgba(45,74,62,.15),transparent 70%)' }} />
         <Leaf size={52} style={{ color:T.green }} strokeWidth={1.2} />
       </div>
       <h1 style={{ fontFamily:'sans-serif', fontSize:'36px', lineHeight:1.25, marginBottom:'16px', color:T.ink }}>Riconnetti<br/>con il presente</h1>
       <p style={{ fontSize:'14px', lineHeight:1.625, maxWidth:'320px', color:T.muted }}>
         Non ti dirò di smettere. Ti aiuterò a notare. Poi a scegliere.
       </p>
-      <div style={{ marginTop:'32px', display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'12px', width:'100%', textAlign:'center' }}>
-        {[['186','controlli/giorno'],['4h','al telefono'],['23%','recuperabile']].map(([n,l],i)=>(
-          <div key={i}>
+      <div style={{ marginTop:'32px', display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'12px', width:'100%' }}>
+        {[['186','controlli/giorno'],['4h','al telefono'],['23%','recuperabile']].map(([n,l],i) => (
+          <div key={i} style={{ textAlign:'center' }}>
             <p style={{ fontFamily:'sans-serif', fontSize:'24px', color:T.green }}>{n}</p>
             <p style={{ fontSize:'10px', marginTop:'4px', lineHeight:1.25, color:T.muted }}>{l}</p>
           </div>
@@ -344,9 +386,9 @@ function OnbName({ user, setUser }) {
       <h2 style={{ fontFamily:'sans-serif', fontSize:'30px', lineHeight:1.25, marginBottom:'8px', color:T.ink }}>Come ti chiami?</h2>
       <p style={{ fontSize:'14px', marginBottom:'32px', color:T.muted }}>Solo per parlarti come una persona.</p>
       <input autoFocus type="text" value={user.name}
-        onChange={e => setUser({...user, name:e.target.value})}
+        onChange={e => setUser({ ...user, name: e.target.value })}
         placeholder="Il tuo nome"
-        style={{ width:'100%', borderRadius:'16px', padding:'16px 20px', fontSize:'16px', outline:'none', borderWidth:'2px', borderStyle:'solid', background:'white', borderColor:user.name?T.green:'rgba(45,58,46,.1)', color:T.ink, fontFamily:'inherit' }} />
+        style={{ width:'100%', borderRadius:'16px', padding:'16px 20px', fontSize:'16px', outline:'none', borderWidth:'2px', borderStyle:'solid', background:'white', borderColor:user.name?T.green:'rgba(45,58,46,.1)', color:T.ink, fontFamily:'inherit', boxSizing:'border-box' }} />
     </div>
   );
 }
@@ -366,8 +408,8 @@ function OnbRelationship({ user, setUser }) {
         {opts.map(o => {
           const sel = user.relationship === o.id;
           return (
-            <button key={o.id} onClick={() => setUser({...user,relationship:o.id})}
-              style={{ width:'100%', textAlign:'left', borderRadius:'16px', padding:'16px', borderWidth:'2px', borderStyle:'solid', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)' }}>
+            <button key={o.id} onClick={() => setUser({ ...user, relationship: o.id })}
+              style={{ width:'100%', textAlign:'left', borderRadius:'16px', padding:'16px', borderWidth:'2px', borderStyle:'solid', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)', cursor:'pointer' }}>
               <p style={{ fontWeight:500, fontSize:'14px' }}>{o.label}</p>
               <p style={{ fontSize:'12px', marginTop:'2px', opacity:0.7 }}>{o.sub}</p>
             </button>
@@ -380,16 +422,16 @@ function OnbRelationship({ user, setUser }) {
 
 function OnbTimes({ user, setUser }) {
   const opts = [
-    { id:'morning', label:'Appena sveglio',   Icon:Coffee },
-    { id:'commute', label:'Spostamenti',       Icon:Smartphone },
-    { id:'lunch',   label:'Dopo pranzo',       Icon:Sun },
-    { id:'work',    label:'Lavoro',            Icon:Briefcase },
-    { id:'evening', label:'Sera sul divano',   Icon:Cloud },
-    { id:'night',   label:'Prima di dormire',  Icon:Moon },
+    { id:'morning', label:'Appena sveglio',  Icon:Coffee },
+    { id:'commute', label:'Spostamenti',      Icon:Smartphone },
+    { id:'lunch',   label:'Dopo pranzo',      Icon:Sun },
+    { id:'work',    label:'Lavoro',           Icon:Briefcase },
+    { id:'evening', label:'Sera sul divano',  Icon:Cloud },
+    { id:'night',   label:'Prima di dormire', Icon:Moon },
   ];
   const toggle = id => {
     const has = user.vulnerableTimes.includes(id);
-    setUser({...user, vulnerableTimes: has ? user.vulnerableTimes.filter(t=>t!==id) : [...user.vulnerableTimes,id]});
+    setUser({ ...user, vulnerableTimes: has ? user.vulnerableTimes.filter(t => t !== id) : [...user.vulnerableTimes, id] });
   };
   return (
     <div style={{ paddingTop:'16px' }}>
@@ -400,7 +442,7 @@ function OnbTimes({ user, setUser }) {
           const sel = user.vulnerableTimes.includes(id);
           return (
             <button key={id} onClick={() => toggle(id)}
-              style={{ textAlign:'left', borderRadius:'16px', padding:'16px', borderWidth:'2px', borderStyle:'solid', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)' }}>
+              style={{ textAlign:'left', borderRadius:'16px', padding:'16px', borderWidth:'2px', borderStyle:'solid', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)', cursor:'pointer' }}>
               <Icon size={18} style={{ marginBottom:8, opacity:.8 }} />
               <p style={{ fontWeight:500, fontSize:'12px' }}>{label}</p>
             </button>
@@ -422,18 +464,18 @@ function OnbApps({ user, setUser }) {
   ];
   const toggle = id => {
     const has = user.apps.includes(id);
-    setUser({...user, apps: has ? user.apps.filter(a=>a!==id) : [...user.apps,id]});
+    setUser({ ...user, apps: has ? user.apps.filter(a => a !== id) : [...user.apps, id] });
   };
   return (
     <div style={{ paddingTop:'16px' }}>
       <h2 style={{ fontFamily:'sans-serif', fontSize:'30px', lineHeight:1.25, marginBottom:'8px', color:T.ink }}>Quali app<br/>ti rubano tempo?</h2>
-      <p style={{ fontSize:'14px', marginBottom:'24px', color:T.muted }}>Le metterò in pausa, non le bloccherò. Sceglierai tu.</p>
+      <p style={{ fontSize:'14px', marginBottom:'24px', color:T.muted }}>Le metterò in pausa, non le bloccherò.</p>
       <div>
         {opts.map(({ id, label, Icon, color }) => {
           const sel = user.apps.includes(id);
           return (
             <button key={id} onClick={() => toggle(id)}
-              style={{ width:'100%', display:'flex', alignItems:'center', gap:'12px', borderRadius:'16px', padding:'14px', borderWidth:'2px', borderStyle:'solid', marginBottom:'8px', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)' }}>
+              style={{ width:'100%', display:'flex', alignItems:'center', gap:'12px', borderRadius:'16px', padding:'14px', borderWidth:'2px', borderStyle:'solid', marginBottom:'8px', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)', cursor:'pointer' }}>
               <div style={{ width:'36px', height:'36px', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center', background:sel?'rgba(244,239,230,.15)':`${color}15` }}>
                 <Icon size={16} style={{ color:sel?T.cream:color }} />
               </div>
@@ -463,12 +505,12 @@ function OnbIntensity({ user, setUser }) {
         {opts.map(o => {
           const sel = user.intensity === o.id;
           return (
-            <button key={o.id} onClick={() => setUser({...user,intensity:o.id})}
-              style={{ width:'100%', textAlign:'left', borderRadius:'16px', padding:'16px', borderWidth:'2px', borderStyle:'solid', marginBottom:'10px', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)' }}>
+            <button key={o.id} onClick={() => setUser({ ...user, intensity: o.id })}
+              style={{ width:'100%', textAlign:'left', borderRadius:'16px', padding:'16px', borderWidth:'2px', borderStyle:'solid', marginBottom:'10px', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)', cursor:'pointer' }}>
               <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:'4px' }}>
                 <p style={{ fontFamily:'sans-serif', fontSize:'20px' }}>{o.label}</p>
-                {o.id==='balanced' && (
-                  <span style={{ fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', paddingLeft:'8px', paddingRight:'8px', paddingTop:'2px', paddingBottom:'2px', borderRadius:'9999px', background:sel?'rgba(244,239,230,.2)':'rgba(201,123,92,.15)', color:sel?T.cream:T.terra }}>
+                {o.id === 'balanced' && (
+                  <span style={{ fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.05em', padding:'2px 8px', borderRadius:'9999px', background:sel?'rgba(244,239,230,.2)':'rgba(201,123,92,.15)', color:sel?T.cream:T.terra }}>
                     Consigliato
                   </span>
                 )}
@@ -494,7 +536,7 @@ function OnbPermission() {
         Sereno ha bisogno dell'accesso al "tempo di utilizzo". I tuoi dati restano sul tuo telefono.
       </p>
       <div style={{ width:'100%' }}>
-        {['Niente cloud. Niente tracker.','Niente pubblicità. Mai.','Codice aperto.'].map((r,i) => (
+        {['Niente cloud. Niente tracker.','Niente pubblicità. Mai.','Codice aperto.'].map((r, i) => (
           <div key={i} style={{ display:'flex', alignItems:'center', gap:'10px', fontSize:'12px', marginBottom:'8px', color:T.ink }}>
             <Check size={14} style={{ color:T.green }} strokeWidth={3} />
             <span>{r}</span>
@@ -509,7 +551,7 @@ function OnbReady({ user }) {
   return (
     <div style={{ paddingTop:'16px', display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center', justifyContent:'center', height:'100%' }}>
       <div style={{ position:'relative', width:'96px', height:'96px', marginBottom:'24px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-        <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, borderRadius:'9999px', animation:'pulse-soft 3s ease-in-out infinite', background:'radial-gradient(circle,rgba(201,123,92,.2),transparent 70%)' }} />
+        <div className="pulse-soft" style={{ position:'absolute', top:0, right:0, bottom:0, left:0, borderRadius:'9999px', background:'radial-gradient(circle,rgba(201,123,92,.2),transparent 70%)' }} />
         <TreePine size={48} style={{ color:T.terra }} strokeWidth={1.2} />
       </div>
       <h2 style={{ fontFamily:'sans-serif', fontSize:'30px', lineHeight:1.25, marginBottom:'12px', color:T.ink }}>
@@ -520,13 +562,13 @@ function OnbReady({ user }) {
       </p>
       <div style={{ borderRadius:'16px', padding:'16px', width:'100%', background:'white', border:'1px solid rgba(45,58,46,.08)' }}>
         <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:'8px', color:T.muted }}>Modalità iniziale</p>
-        <p style={{ fontSize:'14px', color:T.ink }}><span style={{ fontFamily:'sans-serif', fontSize:'18px' }}>Famiglia</span> attiva 19:00–21:30</p>
+        <p style={{ fontSize:'14px', color:T.ink }}><span style={{ fontFamily:'sans-serif', fontSize:'18px' }}>Famiglia</span> · 19:00–21:30</p>
       </div>
     </div>
   );
 }
 
-/* ─── BOTTOM NAV ─────────────────────────────────────────── */
+/* ─── BOTTOM NAV ─────────────────────────────────────────────── */
 function BottomNav({ screen, setScreen, dark }) {
   const tabs = [
     { id:'garden',   label:'Giardino' },
@@ -534,13 +576,14 @@ function BottomNav({ screen, setScreen, dark }) {
     { id:'modes',    label:'Modalità' },
   ];
   return (
-    <div style={{position:'absolute', bottom:0, left:0, right:0, display:'flex', justifyContent:'space-around', padding:'16px 24px 28px', backdropFilter:'blur(12px)', background:dark?'rgba(26,46,37,.75)':'rgba(244,239,230,.75)', borderTop:'1px solid rgba(0,0,0,.06)'}}>
+    <div style={{ position:'absolute', bottom:0, left:0, right:0, display:'flex', justifyContent:'space-around', padding:'16px 24px 28px', backdropFilter:'blur(12px)', background:dark?'rgba(26,46,37,.75)':'rgba(244,239,230,.75)', borderTop:'1px solid rgba(0,0,0,.06)', zIndex:20 }}>
       {tabs.map(({ id, label }) => {
         const active = screen === id;
         const color  = dark ? '#f4efe6' : '#2d3a2e';
         return (
-          <button key={id} onClick={() => setScreen(id)} style={{display:'flex', flexDirection:'column', alignItems:'center', gap:'4px', padding:'4px 0', border:'none', background:'none', cursor:'pointer'}}>
-            <span style={{color, opacity:active?1:.38, fontSize:'13px', fontWeight:active?600:400}}>{label}</span>
+          <button key={id} onClick={() => setScreen(id)}
+            style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'4px', padding:'4px 0', border:'none', background:'none', cursor:'pointer' }}>
+            <span style={{ color, opacity:active?1:.38, fontSize:'13px', fontWeight:active?600:400 }}>{label}</span>
           </button>
         );
       })}
@@ -548,24 +591,165 @@ function BottomNav({ screen, setScreen, dark }) {
   );
 }
 
+/* ─── GARDEN ─────────────────────────────────────────────────── */
+const APP_LABELS = { instagram:'Instagram', tiktok:'TikTok', x:'X / Twitter', youtube:'YouTube', whatsapp:'WhatsApp', reddit:'Reddit' };
+const MODE_COLORS = { lavoro:T.greenMid, famiglia:T.terra, sonno:'#6b7d8e', libero:T.earth };
+const MODE_LABELS = { lavoro:'Lavoro profondo', famiglia:'Famiglia', sonno:'Sonno', libero:'Respiro libero' };
+
 function Garden({ user, streak, opensToday, hours, mins, realTrees, friends=[],
                   onTriggerPause, onOpenSettings, onOpenModeSheet, onOpenFriends, onStartFocus }) {
+  const modeColor = MODE_COLORS[user.activeMode] || T.earth;
+  const modeLabel = MODE_LABELS[user.activeMode] || 'Libero';
+  const treeCount = Math.max(1, Math.min(9, streak || 1));
+  const today     = new Date().toLocaleDateString('it-IT', { weekday:'long', day:'numeric', month:'long' });
 
   return (
-    <div style={{width:'100%', height:'100vh', backgroundColor:'#c4b896', padding:'20px', position:'relative'}}>
-      <h1 style={{color:'#2d3a2e', fontSize:'28px', margin:0}}>Il tuo giardino</h1>
-      <button onClick={() => onTriggerPause('Instagram')}
-        style={{backgroundColor:'#2d4a3e', color:'white', padding:'15px', borderRadius:'12px', width:'100%', marginTop:'20px', border:'none', cursor:'pointer', fontSize:'16px'}}>
-        Apri Instagram
-      </button>
+    <div className="scroll" style={{ position:'absolute', top:0, left:0, right:0, bottom:0, overflowY:'auto', paddingBottom:90 }}>
+
+      {/* Header */}
+      <div style={{ padding:'8px 20px 10px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <div>
+          <p style={{ fontFamily:'sans-serif', fontSize:22, color:T.ink, lineHeight:1.2, margin:0 }}>
+            {user.name ? `Ciao, ${user.name}` : 'Il tuo giardino'}
+          </p>
+          <p style={{ fontSize:11, color:T.muted, marginTop:3 }}>{today}</p>
+        </div>
+        <div style={{ display:'flex', gap:8 }}>
+          {friends.length > 0 && (
+            <button onClick={onOpenFriends}
+              style={{ width:36, height:36, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(45,58,46,.1)', border:'none', cursor:'pointer' }}>
+              <Users size={16} style={{ color:T.ink }} />
+            </button>
+          )}
+          <button onClick={onOpenSettings}
+            style={{ width:36, height:36, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(45,58,46,.1)', border:'none', cursor:'pointer' }}>
+            <Gear size={16} style={{ color:T.ink }} />
+          </button>
+        </div>
+      </div>
+
+      {/* Mode badge */}
+      <div style={{ padding:'0 20px 14px' }}>
+        <button onClick={onOpenModeSheet}
+          style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'6px 12px 6px 8px', borderRadius:9999, background:'rgba(45,58,46,.1)', border:'none', cursor:'pointer' }}>
+          <div style={{ width:8, height:8, borderRadius:'50%', background:modeColor }} />
+          <span style={{ fontSize:12, color:T.ink, fontWeight:500 }}>{modeLabel}</span>
+          <ChevronRight size={12} style={{ color:T.ink, opacity:.4 }} />
+        </button>
+      </div>
+
+      {/* Stats row */}
+      <div style={{ padding:'0 20px 16px', display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+        <StatCard top={streak} label="giorni streak" />
+        <StatCard top={hours > 0 ? `${hours}h ${mins}m` : `${mins}m`} label="recuperati oggi" />
+        <StatCard top={opensToday} label="aperture oggi" />
+      </div>
+
+      {/* Garden visual */}
+      <div style={{ margin:'0 20px 18px', borderRadius:24, overflow:'hidden', position:'relative', minHeight:160, background:'linear-gradient(180deg,#c8e0b0 0%,#8ab872 60%,#5a8042 100%)' }}>
+        <div style={{ position:'absolute', top:0, left:0, right:0, height:50, background:'linear-gradient(180deg,rgba(210,235,255,.4) 0%,transparent 100%)' }} />
+        <div style={{ position:'absolute', bottom:18, left:0, right:0, display:'flex', alignItems:'flex-end', justifyContent:'center', gap:10, padding:'0 20px' }}>
+          {Array.from({ length: treeCount }).map((_, i) => (
+            <div key={i} style={{ animation:`sway ${3.5 + i * 0.25}s ease-in-out infinite`, animationDelay:`${i * 0.35}s`, transformOrigin:'bottom center' }}>
+              <TreePine size={28 + (i % 3) * 10} style={{ color:`rgba(25,55,30,${0.65 + 0.12 * (i % 3)})` }} strokeWidth={1.5} />
+            </div>
+          ))}
+        </div>
+        <div style={{ position:'absolute', bottom:0, left:0, right:0, height:18, background:'rgba(40,70,45,.22)', borderRadius:'0 0 24px 24px' }} />
+        <div style={{ position:'relative', padding:'12px 16px 40px', display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+          <p style={{ fontSize:11, color:'rgba(255,255,255,.85)', fontWeight:500 }}>
+            {streak === 0 ? 'Inizia oggi il tuo giardino' : `${streak} ${streak === 1 ? 'giorno' : 'giorni'} di crescita`}
+          </p>
+          <div style={{ display:'flex', alignItems:'center', gap:4, background:'rgba(0,0,0,.18)', borderRadius:9999, padding:'4px 8px' }}>
+            <TreePine size={11} style={{ color:'rgba(255,255,255,.9)' }} />
+            <span style={{ fontSize:11, color:'rgba(255,255,255,.9)', fontWeight:500 }}>{realTrees} reali</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Focus sessions */}
+      <div style={{ padding:'0 20px 18px' }}>
+        <p style={{ fontSize:11, textTransform:'uppercase', letterSpacing:'.12em', color:T.muted, marginBottom:10 }}>Sessione focus</p>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+          <button onClick={() => onStartFocus('bloom', 20, 'rose')}
+            style={{ borderRadius:20, padding:'16px', background:T.green, border:'none', cursor:'pointer', textAlign:'left' }}>
+            <Flower2 size={22} style={{ color:T.earth, marginBottom:10 }} />
+            <p style={{ fontSize:15, fontWeight:600, color:T.cream, margin:0 }}>Bloom</p>
+            <p style={{ fontSize:11, color:T.earth, opacity:.85, marginTop:3 }}>20 min · cresce un fiore</p>
+          </button>
+          <button onClick={() => onStartFocus('breath', 10, null)}
+            style={{ borderRadius:20, padding:'16px', background:'rgba(45,58,46,.1)', border:'none', cursor:'pointer', textAlign:'left' }}>
+            <Wind size={22} style={{ color:T.green, marginBottom:10 }} />
+            <p style={{ fontSize:15, fontWeight:600, color:T.ink, margin:0 }}>Respira</p>
+            <p style={{ fontSize:11, color:T.muted, marginTop:3 }}>10 min · respira lento</p>
+          </button>
+        </div>
+      </div>
+
+      {/* Tracked apps */}
+      {user.apps?.length > 0 ? (
+        <div style={{ padding:'0 20px 18px' }}>
+          <p style={{ fontSize:11, textTransform:'uppercase', letterSpacing:'.12em', color:T.muted, marginBottom:10 }}>App tracciate</p>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {user.apps.map(appId => (
+              <button key={appId} onClick={() => onTriggerPause(APP_LABELS[appId] || appId)}
+                style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px', borderRadius:16, background:'white', border:'none', cursor:'pointer' }}>
+                <div style={{ width:36, height:36, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(45,74,62,.07)', flexShrink:0 }}>
+                  <Smartphone size={16} style={{ color:T.green }} />
+                </div>
+                <span style={{ flex:1, textAlign:'left', fontSize:14, color:T.ink, fontWeight:500 }}>{APP_LABELS[appId] || appId}</span>
+                <ChevronRight size={14} style={{ color:T.muted, opacity:.5 }} />
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ padding:'0 20px 18px' }}>
+          <div style={{ borderRadius:16, padding:'16px', background:'rgba(45,58,46,.06)', textAlign:'center' }}>
+            <p style={{ fontSize:13, color:T.muted, lineHeight:1.5 }}>
+              Nessuna app tracciata.{'\n'}Vai nelle impostazioni per configurarle.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Friends preview */}
+      {friends.length > 0 && (
+        <div style={{ margin:'0 20px 18px', borderRadius:20, padding:'16px', background:'white' }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+            <p style={{ fontSize:11, textTransform:'uppercase', letterSpacing:'.12em', color:T.muted }}>Giardino condiviso</p>
+            <button onClick={onOpenFriends}
+              style={{ fontSize:12, color:T.terra, background:'none', border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:2 }}>
+              Vedi <ChevronRight size={11} />
+            </button>
+          </div>
+          <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+            {friends.slice(0, 4).map(f => (
+              <div key={f.id} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
+                <div style={{ width:40, height:40, borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, background:`${f.color}22` }}>{f.avatar}</div>
+                <p style={{ fontSize:10, color:T.muted, maxWidth:40, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.name}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/* ─── PAUSE OVERLAY ──────────────────────────────────────── */
+function StatCard({ top, label }) {
+  return (
+    <div style={{ borderRadius:16, padding:'12px 8px', background:'rgba(45,58,46,.1)', textAlign:'center' }}>
+      <p style={{ fontFamily:'sans-serif', fontSize:20, color:T.ink, lineHeight:1, margin:0 }}>{top}</p>
+      <p style={{ fontSize:10, color:T.muted, marginTop:4, lineHeight:1.3 }}>{label}</p>
+    </div>
+  );
+}
+
+/* ─── PAUSE OVERLAY ──────────────────────────────────────────── */
 function PauseOverlay({ appName, opensToday, intensity, onResist, onSlip }) {
-  const target = intensity==='gentle' ? 1 : intensity==='strict' ? 5 : 3;
-  const [phase,       setPhase]       = useState('breathing');   // breathing | reflection
+  const target = intensity === 'gentle' ? 1 : intensity === 'strict' ? 5 : 3;
+  const [phase,       setPhase]       = useState('breathing');
   const [breathPhase, setBreathPhase] = useState('in');
   const [breathCount, setBreathCount] = useState(0);
   const [reason,      setReason]      = useState(null);
@@ -574,9 +758,9 @@ function PauseOverlay({ appName, opensToday, intensity, onResist, onSlip }) {
     if (phase !== 'breathing') return;
     const t = setTimeout(() => {
       setBreathPhase(b => {
-        if (b==='in') return 'out';
+        if (b === 'in') return 'out';
         setBreathCount(c => {
-          const next = c+1;
+          const next = c + 1;
           if (next >= target) setPhase('reflection');
           return next;
         });
@@ -587,16 +771,15 @@ function PauseOverlay({ appName, opensToday, intensity, onResist, onSlip }) {
   }, [breathPhase, phase, target]);
 
   const reasons = [
-    { id:'boredom',    label:'Noia',             advice:'È solo abitudine. 60 secondi nel giardino.' },
-    { id:'habit',      label:'Riflesso',          advice:'Il pollice si muove da solo. Respira ancora.' },
-    { id:'avoid',      label:'Evito qualcosa',    advice:"Cosa stai evitando? Spesso è lì la cosa importante." },
-    { id:'validation', label:'Validazione',       advice:'Il tuo valore non sta in un like. Tu lo sai.' },
-    { id:'real',       label:'Mi serve davvero',  advice:'Ok. Hai 5 minuti consapevoli.' },
+    { id:'boredom',    label:'Noia',            advice:'È solo abitudine. 60 secondi nel giardino.' },
+    { id:'habit',      label:'Riflesso',         advice:'Il pollice si muove da solo. Respira ancora.' },
+    { id:'avoid',      label:'Evito qualcosa',   advice:"Cosa stai evitando? Spesso è lì la cosa importante." },
+    { id:'validation', label:'Validazione',      advice:'Il tuo valore non sta in un like. Tu lo sai.' },
+    { id:'real',       label:'Mi serve davvero', advice:'Ok. Hai 5 minuti consapevoli.' },
   ];
 
   return (
     <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:50, background:'radial-gradient(ellipse at center,#2d4a3e,#1a2a1e)' }}>
-
       <div style={{ position:'absolute', top:'48px', left:'24px', right:'24px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
           <Lock size={13} style={{ color:T.earth }} />
@@ -605,11 +788,11 @@ function PauseOverlay({ appName, opensToday, intensity, onResist, onSlip }) {
         <span style={{ fontSize:'12px', color:T.greenMid }}>{opensToday}ª volta oggi</span>
       </div>
 
-      {phase==='breathing' && (
-        <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', paddingLeft:'32px', paddingRight:'32px', animation:'fade-up .45s ease-out forwards' }}>
+      {phase === 'breathing' && (
+        <div className="fade-up" style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', paddingLeft:'32px', paddingRight:'32px' }}>
           <div style={{ textAlign:'center', marginBottom:'40px' }}>
             <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', marginBottom:'8px', color:T.greenMid }}>
-              {breathPhase==='in' ? 'Inspira' : 'Espira'}
+              {breathPhase === 'in' ? 'Inspira' : 'Espira'}
             </p>
             <p style={{ fontFamily:'sans-serif', fontSize:'24px', lineHeight:1.3, color:T.cream }}>
               Cosa stai<br/>cercando davvero?
@@ -622,27 +805,26 @@ function PauseOverlay({ appName, opensToday, intensity, onResist, onSlip }) {
               width:160, height:160, borderRadius:'50%',
               background:'radial-gradient(circle,rgba(212,197,169,.45),rgba(212,197,169,.1) 70%,transparent)',
               boxShadow:'0 0 60px rgba(212,197,169,.28)',
-              animation:`${breathPhase==='in'?'br-expand':'br-contract'} 2.6s ease-in-out forwards`
+              animation:`${breathPhase === 'in' ? 'br-expand' : 'br-contract'} 2.6s ease-in-out forwards`
             }} />
             <div style={{ position:'absolute', fontFamily:'sans-serif', fontSize:'48px', color:T.cream }}>
-              {breathCount+1}<span style={{ fontSize:'24px', opacity:0.45 }}>/{target}</span>
+              {breathCount + 1}<span style={{ fontSize:'24px', opacity:0.45 }}>/{target}</span>
             </div>
           </div>
           <p style={{ fontSize:'12px', color:T.greenMid }}>Resta. Stai facendo bene.</p>
         </div>
       )}
 
-      {phase==='reflection' && (
-        <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', flexDirection:'column', padding:'80px 28px 24px', animation:'fade-up .45s ease-out forwards' }}>
+      {phase === 'reflection' && (
+        <div className="fade-up" style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', flexDirection:'column', padding:'80px 28px 24px' }}>
           <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', marginBottom:'8px', color:T.greenMid }}>Riflessione</p>
           <h2 style={{ fontFamily:'sans-serif', fontSize:'30px', lineHeight:1.3, marginBottom:'8px', color:T.cream }}>
             Cosa cerchi<br/>in {appName}?
           </h2>
           <p style={{ fontSize:'12px', marginBottom:'20px', color:T.greenMid }}>Una risposta onesta cambia tutto.</p>
-
-          <div style={{ display:'flex', flexDirection:'column', gap:'8px', flex:1, overflowY:'auto', MsOverflowStyle:'none', scrollbarWidth:'none' }}>
+          <div className="scroll" style={{ display:'flex', flexDirection:'column', gap:'8px', flex:1, overflowY:'auto' }}>
             {reasons.map(r => {
-              const sel = reason===r.id;
+              const sel = reason === r.id;
               return (
                 <button key={r.id} onClick={() => setReason(r.id)}
                   style={{ width:'100%', textAlign:'left', borderRadius:'12px', padding:'12px', background:sel?T.earth:'rgba(244,239,230,.08)', color:sel?T.ink:T.cream, border:'none', cursor:'pointer' }}>
@@ -652,15 +834,14 @@ function PauseOverlay({ appName, opensToday, intensity, onResist, onSlip }) {
               );
             })}
           </div>
-
           <div style={{ display:'flex', flexDirection:'column', gap:'8px', marginTop:'16px' }}>
             <button onClick={onResist} disabled={!reason}
               style={{ width:'100%', borderRadius:'16px', padding:'14px 0', fontSize:'14px', fontWeight:500, background:reason?T.cream:'rgba(244,239,230,.18)', color:reason?T.green:'rgba(244,239,230,.35)', border:'none', cursor:reason?'pointer':'default' }}>
               Torno al mio momento
             </button>
-            <button onClick={onSlip} disabled={reason!=='real'}
+            <button onClick={onSlip} disabled={reason !== 'real'}
               style={{ width:'100%', fontSize:'12px', textDecoration:'underline', textUnderlineOffset:'4px', padding:'4px 0', background:'none', border:'none', cursor:reason==='real'?'pointer':'default', color:reason==='real'?T.greenMid:'rgba(138,150,118,.3)' }}>
-              {reason==='real' ? `Apri ${appName} (5 min)` : 'Disponibile solo per necessità reale'}
+              {reason === 'real' ? `Apri ${appName} (5 min)` : 'Disponibile solo per necessità reale'}
             </button>
           </div>
         </div>
@@ -669,49 +850,39 @@ function PauseOverlay({ appName, opensToday, intensity, onResist, onSlip }) {
   );
 }
 
-/* ─── FOCUS SESSION ──────────────────────────────────────── */
+/* ─── FOCUS SESSION ──────────────────────────────────────────── */
 function FocusSession({ type, duration, flower, onEnd }) {
-  const SCALE = 1;
-  const total = duration * 60;
+  const total   = duration * 60;
   const [elapsed, setElapsed] = useState(0);
-
   useEffect(() => {
-    const iv = setInterval(() => setElapsed(e => Math.min(total, e+SCALE)), 1000);
+    const iv = setInterval(() => setElapsed(e => Math.min(total, e + 1)), 1000);
     return () => clearInterval(iv);
   }, [total]);
 
-  const progress  = Math.min(1, elapsed/total);
-  const remaining = Math.max(0, total-elapsed);
-  const rm        = String(Math.floor(remaining/60)).padStart(2,'0');
-  const rs        = String(remaining%60).padStart(2,'0');
-  const done      = progress >= 1;
+  const progress  = Math.min(1, elapsed / total);
+  const remaining = Math.max(0, total - elapsed);
+  const rm = String(Math.floor(remaining / 60)).padStart(2, '0');
+  const rs = String(remaining % 60).padStart(2, '0');
+  const done = progress >= 1;
 
-  const bg = type==='bloom'
+  const bg = type === 'bloom'
     ? 'radial-gradient(ellipse at center top,#2a1a35,#0f0a1f)'
     : 'radial-gradient(ellipse at center,#2d4a3e,#1a2a1e)';
 
   return (
     <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:50, overflow:'hidden', background:bg }}>
-      {type==='bloom' && [
-        [8,12,.4,0],[16,8,.28,1],[80,6,.35,.5],[20,4,.3,1.5],[4,32,.25,2]
-      ].map(([r,t,o,d],i)=>(
-        <div key={i} style={{ position:'absolute', width:'4px', height:'4px', borderRadius:'50%', right:`${r}%`, top:`${t}%`, opacity:o, background:T.cream, animation:'pulse-soft 3s ease-in-out infinite', animationDelay:`${d}s` }} />
-      ))}
-
-      <div style={{ position:'absolute', top:'56px', left:0, right:0, textAlign:'center', zIndex:10, animation:'fade-up .45s ease-out forwards' }}>
+      <div style={{ position:'absolute', top:'56px', left:0, right:0, textAlign:'center', zIndex:10 }} className="fade-up">
         <p style={{ fontFamily:'sans-serif', fontSize:'48px', letterSpacing:'-0.025em', color:T.cream }}>{rm}:{rs}</p>
         <p style={{ fontSize:'10px', textTransform:'uppercase', letterSpacing:'.4em', opacity:0.5, marginTop:'12px', color:T.cream }}>
-          {done ? 'Completato' : type==='bloom' ? 'Il fiore sboccia' : 'Respira con me'}
+          {done ? 'Completato' : type === 'bloom' ? 'Il fiore sboccia' : 'Respira con me'}
         </p>
       </div>
-
       <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
-        {type==='bloom' ? <FlowerBloom progress={progress} flower={flower} /> : <BreathingCircle />}
+        {type === 'bloom' ? <FlowerBloom progress={progress} flower={flower} /> : <BreathingCircle />}
       </div>
-
       <div style={{ position:'absolute', bottom:'48px', left:0, right:0, textAlign:'center', zIndex:10, paddingLeft:'32px', paddingRight:'32px' }}>
         {done ? (
-          <div style={{ animation:'fade-up .45s ease-out forwards' }}>
+          <div className="fade-up">
             <p style={{ fontSize:'14px', marginBottom:'16px', color:T.cream }}>Un albero in più nella tua foresta. 🌳</p>
             <button onClick={onEnd} style={{ borderRadius:'9999px', padding:'12px 24px', fontSize:'14px', fontWeight:500, background:T.earth, color:T.green, border:'none', cursor:'pointer' }}>
               Torna al giardino →
@@ -727,74 +898,41 @@ function FocusSession({ type, duration, flower, onEnd }) {
   );
 }
 
-/* flower */
 const FLOWER_PALETTES = {
-  rose:      { front:'radial-gradient(ellipse at 30% 25%,#fde4ea,#f4b8c8 50%,#d97894)',
-                back:'radial-gradient(ellipse at 30% 25%,#f8d4dc,#e8a8b8 60%,#b06478)',
-                glow:'rgba(244,184,200', center:'radial-gradient(circle at 35% 35%,#fff4b8,#f5d76e 35%,#e8a83a)',
-                pollen:'#8a6a3a', count:8,  shape:'50% 50% 50% 50%/85% 85% 15% 15%' },
-  lotus:     { front:'radial-gradient(ellipse at 30% 25%,#fff,#f4e8e0 45%,#d4a8b0)',
-                back:'radial-gradient(ellipse at 30% 25%,#faf0e8,#e8d0c0 60%,#b08894)',
-                glow:'rgba(244,232,224', center:'radial-gradient(circle at 35% 35%,#fffbe0,#f5d76e 50%,#c8a040)',
-                pollen:'#a0763a', count:10, shape:'40% 40% 50% 50%/80% 80% 20% 20%' },
-  sunflower: { front:'radial-gradient(ellipse at 30% 25%,#fff4a8,#f5d76e 40%,#d89830)',
-                back:'radial-gradient(ellipse at 30% 25%,#f5d76e,#d89830 60%,#8a5818)',
-                glow:'rgba(245,215,110', center:'radial-gradient(circle at 35% 35%,#6a4818,#3a2810 60%,#1a1408)',
-                pollen:'#1a1408', count:12, shape:'30% 30% 50% 50%/90% 90% 10% 10%' },
-  cherry:    { front:'radial-gradient(ellipse at 30% 25%,#fff,#fde4ea 50%,#f4b8c8)',
-                back:'radial-gradient(ellipse at 30% 25%,#fde4ea,#f4c8d8 60%,#d098a8)',
-                glow:'rgba(253,228,234', center:'radial-gradient(circle at 35% 35%,#fff4b8,#f5b86e 50%,#d87830)',
-                pollen:'#8a4830', count:5,  shape:'30% 70% 30% 70%/80% 80% 20% 20%' },
+  rose:      { front:'radial-gradient(ellipse at 30% 25%,#fde4ea,#f4b8c8 50%,#d97894)', back:'radial-gradient(ellipse at 30% 25%,#f8d4dc,#e8a8b8 60%,#b06478)', glow:'rgba(244,184,200', center:'radial-gradient(circle at 35% 35%,#fff4b8,#f5d76e 35%,#e8a83a)', pollen:'#8a6a3a', count:8,  shape:'50% 50% 50% 50%/85% 85% 15% 15%' },
+  lotus:     { front:'radial-gradient(ellipse at 30% 25%,#fff,#f4e8e0 45%,#d4a8b0)',    back:'radial-gradient(ellipse at 30% 25%,#faf0e8,#e8d0c0 60%,#b08894)',    glow:'rgba(244,232,224', center:'radial-gradient(circle at 35% 35%,#fffbe0,#f5d76e 50%,#c8a040)',    pollen:'#a0763a', count:10, shape:'40% 40% 50% 50%/80% 80% 20% 20%' },
+  sunflower: { front:'radial-gradient(ellipse at 30% 25%,#fff4a8,#f5d76e 40%,#d89830)', back:'radial-gradient(ellipse at 30% 25%,#f5d76e,#d89830 60%,#8a5818)',    glow:'rgba(245,215,110', center:'radial-gradient(circle at 35% 35%,#6a4818,#3a2810 60%,#1a1408)',    pollen:'#1a1408', count:12, shape:'30% 30% 50% 50%/90% 90% 10% 10%' },
+  cherry:    { front:'radial-gradient(ellipse at 30% 25%,#fff,#fde4ea 50%,#f4b8c8)',    back:'radial-gradient(ellipse at 30% 25%,#fde4ea,#f4c8d8 60%,#d098a8)',    glow:'rgba(253,228,234', center:'radial-gradient(circle at 35% 35%,#fff4b8,#f5b86e 50%,#d87830)',    pollen:'#8a4830', count:5,  shape:'30% 70% 30% 70%/80% 80% 20% 20%' },
 };
 
-function FlowerBloom({ progress, flower='rose' }) {
-  const p        = FLOWER_PALETTES[flower] || FLOWER_PALETTES.rose;
-  const sz       = 30 + progress*90;
-  const rot      = progress*25;
-  const cSz      = 18 + progress*30;
-  const opacity  = 0.35 + progress*0.65;
-  const glow     = progress;
-  const angles   = Array.from({length:p.count},(_,i)=>(360/p.count)*i);
-  const backOff  = 360/p.count/2;
-  const wMul     = flower==='sunflower' ? 0.42 : 0.57;
-  const hMul     = flower==='sunflower' ? 1.65 : 1.5;
+function FlowerBloom({ progress, flower = 'rose' }) {
+  const p       = FLOWER_PALETTES[flower] || FLOWER_PALETTES.rose;
+  const sz      = 30 + progress * 90;
+  const rot     = progress * 25;
+  const cSz     = 18 + progress * 30;
+  const opacity = 0.35 + progress * 0.65;
+  const glow    = progress;
+  const angles  = Array.from({ length: p.count }, (_, i) => (360 / p.count) * i);
+  const backOff = 360 / p.count / 2;
+  const wMul    = flower === 'sunflower' ? 0.42 : 0.57;
+  const hMul    = flower === 'sunflower' ? 1.65 : 1.5;
 
   return (
     <div style={{ position:'relative', width:300, height:300 }}>
-      <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, background:`radial-gradient(circle,${p.glow},${.28*glow}) 0%,transparent 60%)`,
-        transform:`scale(${0.8+progress*0.6})`, filter:'blur(22px)',
-        transition:'transform 4s cubic-bezier(.22,1,.36,1)'
-      }} />
-      {angles.map((a,i)=>(
-        <div key={`b${i}`} style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', alignItems:'center', justifyContent:'center', transform:`rotate(${a+backOff+rot}deg)`, transition:'transform 6s cubic-bezier(.22,1,.36,1)' }}>
-          <div style={{ width:`${sz*wMul*0.9}px`, height:`${sz*hMul*0.9}px`, background:p.back,
-            borderRadius:p.shape, transformOrigin:'center bottom', transform:`translateY(-${sz*.48}px)`,
-            transition:'all 6s cubic-bezier(.22,1,.36,1)', opacity:opacity*.68 }} />
+      <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, background:`radial-gradient(circle,${p.glow},${.28 * glow}) 0%,transparent 60%)`, transform:`scale(${0.8 + progress * 0.6})`, filter:'blur(22px)', transition:'transform 4s cubic-bezier(.22,1,.36,1)' }} />
+      {angles.map((a, i) => (
+        <div key={`b${i}`} style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', alignItems:'center', justifyContent:'center', transform:`rotate(${a + backOff + rot}deg)`, transition:'transform 6s cubic-bezier(.22,1,.36,1)' }}>
+          <div style={{ width:`${sz * wMul * 0.9}px`, height:`${sz * hMul * 0.9}px`, background:p.back, borderRadius:p.shape, transformOrigin:'center bottom', transform:`translateY(-${sz * .48}px)`, transition:'all 6s cubic-bezier(.22,1,.36,1)', opacity:opacity * .68 }} />
         </div>
       ))}
-      {angles.map((a,i)=>(
-        <div key={`f${i}`} style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', alignItems:'center', justifyContent:'center', transform:`rotate(${a+rot}deg)`, transition:'transform 6s cubic-bezier(.22,1,.36,1)' }}>
-          <div style={{ width:`${sz*wMul}px`, height:`${sz*hMul}px`, background:p.front,
-            borderRadius:p.shape, transformOrigin:'center bottom', transform:`translateY(-${sz*.53}px)`,
-            transition:'all 6s cubic-bezier(.22,1,.36,1)', opacity,
-            boxShadow:progress>.6?`0 0 ${20*glow}px ${p.glow},.5)`:undefined }} />
+      {angles.map((a, i) => (
+        <div key={`f${i}`} style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', alignItems:'center', justifyContent:'center', transform:`rotate(${a + rot}deg)`, transition:'transform 6s cubic-bezier(.22,1,.36,1)' }}>
+          <div style={{ width:`${sz * wMul}px`, height:`${sz * hMul}px`, background:p.front, borderRadius:p.shape, transformOrigin:'center bottom', transform:`translateY(-${sz * .53}px)`, transition:'all 6s cubic-bezier(.22,1,.36,1)', opacity, boxShadow:progress > .6 ? `0 0 ${20 * glow}px ${p.glow},.5)` : undefined }} />
         </div>
       ))}
       <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
-        <div style={{ width:cSz, height:cSz, borderRadius:'50%', background:p.center,
-          boxShadow:`0 0 ${40*glow}px ${p.glow},${.4+glow*.4}),inset 0 0 10px rgba(0,0,0,.25)`,
-          transition:'all 4s cubic-bezier(.22,1,.36,1)' }} />
+        <div style={{ width:cSz, height:cSz, borderRadius:'50%', background:p.center, boxShadow:`0 0 ${40 * glow}px ${p.glow},${.4 + glow * .4}),inset 0 0 10px rgba(0,0,0,.25)`, transition:'all 4s cubic-bezier(.22,1,.36,1)' }} />
       </div>
-      {progress>.72 && (
-        <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, display:'flex', alignItems:'center', justifyContent:'center', animation:'fade-up .45s ease-out forwards' }}>
-          <div style={{ width:`${cSz*.6}px`, height:`${cSz*.6}px`, position:'relative' }}>
-            {Array.from({length:p.count<=5?5:6}).map((_,i)=>{
-              const tot=p.count<=5?5:6;
-              return <div key={i} style={{ position:'absolute', width:'4px', height:'4px', borderRadius:'50%', background:p.pollen, top:`${20+Math.sin(i*2*Math.PI/tot)*25}%`, left:`${20+Math.cos(i*2*Math.PI/tot)*25}%` }} />;
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -804,7 +942,7 @@ function BreathingCircle() {
   const [cycle, setCycle] = useState(0);
   useEffect(() => {
     const t = setInterval(() => {
-      setPhase(p => { if(p==='in') return 'out'; setCycle(c=>c+1); return 'in'; });
+      setPhase(p => { if (p === 'in') return 'out'; setCycle(c => c + 1); return 'in'; });
     }, 4000);
     return () => clearInterval(t);
   }, []);
@@ -812,117 +950,134 @@ function BreathingCircle() {
     <div style={{ position:'relative', width:'288px', height:'288px', display:'flex', alignItems:'center', justifyContent:'center' }}>
       <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, borderRadius:'50%', border:'1px solid rgba(244,239,230,.07)' }} />
       <div style={{ position:'absolute', top:'32px', right:'32px', bottom:'32px', left:'32px', borderRadius:'50%', border:'1px solid rgba(244,239,230,.05)' }} />
-      <div style={{ position:'absolute', top:'64px', right:'64px', bottom:'64px', left:'64px', borderRadius:'50%', border:'1px solid rgba(244,239,230,.04)' }} />
-      <div key={phase} style={{ width:200, height:200, borderRadius:'50%',
-        background:'radial-gradient(circle,rgba(212,197,169,.48),rgba(212,197,169,.14) 60%,transparent)',
-        boxShadow:'0 0 80px rgba(212,197,169,.28)',
-        animation:`${phase==='in'?'br-expand':'br-contract'} 4s ease-in-out forwards` }} />
+      <div key={phase} style={{ width:200, height:200, borderRadius:'50%', background:'radial-gradient(circle,rgba(212,197,169,.48),rgba(212,197,169,.14) 60%,transparent)', boxShadow:'0 0 80px rgba(212,197,169,.28)', animation:`${phase === 'in' ? 'br-expand' : 'br-contract'} 4s ease-in-out forwards` }} />
       <div style={{ position:'absolute', textAlign:'center' }}>
         <p style={{ fontSize:'14px', textTransform:'uppercase', letterSpacing:'.4em', opacity:0.7, marginBottom:'4px', color:T.cream }}>
-          {phase==='in' ? 'Inspira' : 'Espira'}
+          {phase === 'in' ? 'Inspira' : 'Espira'}
         </p>
-        <p style={{ fontFamily:'sans-serif', fontSize:'12px', opacity:0.35, color:T.cream }}>ciclo {cycle+1}</p>
+        <p style={{ fontFamily:'sans-serif', fontSize:'12px', opacity:0.35, color:T.cream }}>ciclo {cycle + 1}</p>
       </div>
     </div>
   );
 }
 
-/* ─── INSIGHTS ───────────────────────────────────────────── */
-function Insights({ tab, setTab, realTrees }) {
-  const BARS = {
-    week:  [40,55,35,70,60,85,75],
-    month: [30,45,60,75],
-    year:  [20,35,50,45,60,70,65,80,75,85,90,95],
-  };
-  const LABELS = {
-    week:  ['L','M','M','G','V','S','D'],
-    month: ['S1','S2','S3','S4'],
-    year:  ['G','F','M','A','M','G','L','A','S','O','N','D'],
-  };
-  const TIME = { week:['14','32','38'], month:['56','18','24'], year:['184','04','120'] };
-  const [th,tm,pct] = TIME[tab];
+/* ─── INSIGHTS ───────────────────────────────────────────────── */
+function Insights({ tab, setTab, realTrees, weeklyMins, streak, timeMin, opensToday }) {
+  const hours = Math.floor(timeMin / 60);
+  const mins  = timeMin % 60;
+
+  const totalWeekMins = weeklyMins.reduce((s, m) => s + m, 0);
+  const weekHours     = Math.floor(totalWeekMins / 60);
+  const weekMinsRem   = totalWeekMins % 60;
+  const maxMins       = Math.max(1, ...weeklyMins);
+  const bars          = weeklyMins.map(m => Math.round((m / maxMins) * 100));
+  const hasWeekData   = totalWeekMins > 0;
+
+  const LABELS_WEEK = ['L','M','M','G','V','S','D'];
 
   return (
-    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, overflowY:'auto', MsOverflowStyle:'none', scrollbarWidth:'none', paddingLeft:'24px', paddingRight:'24px', paddingTop:'8px', paddingBottom:110 }}>
-      <div style={{ marginBottom:'16px' }}>
+    <div className="scroll" style={{ position:'absolute', top:0, right:0, bottom:0, left:0, overflowY:'auto', paddingLeft:24, paddingRight:24, paddingTop:8, paddingBottom:110 }}>
+      <div style={{ marginBottom:16 }}>
         <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', color:T.muted }}>I tuoi pattern</p>
         <h1 style={{ fontFamily:'sans-serif', fontSize:'30px', marginTop:'4px', color:T.ink }}>Vedere chiaro</h1>
       </div>
 
+      {/* Tab selector */}
       <div style={{ display:'flex', gap:'4px', marginBottom:'20px', padding:'4px', borderRadius:'9999px', background:'rgba(45,58,46,.06)' }}>
         {['week','month','year'].map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{ flex:1, padding:'8px 0', fontSize:'12px', fontWeight:500, borderRadius:'9999px', background:tab===t?'white':'transparent', color:tab===t?T.ink:T.muted, border:'none', cursor:'pointer', boxShadow:tab===t?'0 2px 8px rgba(0,0,0,.05)':'none' }}>
-            {t==='week'?'Settimana':t==='month'?'Mese':'Anno'}
+            {t === 'week' ? 'Settimana' : t === 'month' ? 'Mese' : 'Anno'}
           </button>
         ))}
       </div>
 
+      {/* Time card */}
       <div style={{ borderRadius:'24px', padding:'24px', marginBottom:'16px', background:T.green, color:T.cream }}>
-        <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', opacity:0.7, marginBottom:'8px' }}>Tempo recuperato</p>
-        <p style={{ fontFamily:'sans-serif', fontSize:'48px', marginBottom:'4px' }}>
-          {th}<span style={{ fontSize:'24px', opacity:0.6 }}>h</span> {tm}<span style={{ fontSize:'24px', opacity:0.6 }}>m</span>
+        <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', opacity:0.7, marginBottom:'8px' }}>
+          Tempo recuperato {tab === 'week' ? 'questa settimana' : tab === 'month' ? 'questo mese' : "quest'anno"}
         </p>
-        <p style={{ fontSize:'12px', opacity:0.7 }}>+{pct}% rispetto al periodo precedente</p>
-        <div style={{ display:'flex', alignItems:'flex-end', gap:'6px', height:'64px', marginTop:'20px' }}>
-          {BARS[tab].map((h,i,arr) => (
-            <div key={i} style={{ flex:1, borderRadius:'4px 4px 0 0', height:`${h}%`, background:i===arr.length-1?T.earth:'rgba(212,197,169,.4)' }} />
-          ))}
-        </div>
-        <div style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', opacity:0.45, marginTop:'8px' }}>
-          {LABELS[tab].map((l,i) => <span key={i}>{l}</span>)}
-        </div>
-      </div>
-
-      <div style={{ borderRadius:'24px', padding:'20px', marginBottom:'16px', background:'white' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px' }}>
-          <Heart size={16} style={{ color:T.terra }} />
-          <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', fontWeight:500, color:'#5a5a3e' }}>Umore × Schermo</p>
-        </div>
-        <p style={{ fontSize:'14px', lineHeight:1.6, color:T.ink }}>
-          Nei giorni con meno telefono hai riportato <span style={{ fontWeight:600 }}>+42% energia</span> e{' '}
-          <span style={{ fontWeight:600 }}>-31% ansia</span>.
-        </p>
-      </div>
-
-      <div style={{ borderRadius:'24px', padding:'20px', marginBottom:'16px', background:'white' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px' }}>
-          <AlertCircle size={16} style={{ color:T.terra }} />
-          <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', fontWeight:500, color:'#5a5a3e' }}>Momenti fragili</p>
-        </div>
-        <div style={{ display:'flex', flexDirection:'column', gap:'10px' }}>
-          {[
-            { t:'22:30–23:15', a:'Prima di dormire', l:92 },
-            { t:'7:20–7:45',   a:'Appena sveglio',   l:78 },
-            { t:'14:00–14:30', a:'Dopo pranzo',       l:65 },
-          ].map((m,i) => (
-            <div key={i}>
-              <div style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', marginBottom:'4px' }}>
-                <span style={{ color:T.ink, fontWeight:500 }}>{m.t}</span>
-                <span style={{ color:T.muted }}>{m.a}</span>
+        {tab === 'week' ? (
+          hasWeekData ? (
+            <>
+              <p style={{ fontFamily:'sans-serif', fontSize:'48px', marginBottom:'4px' }}>
+                {weekHours}<span style={{ fontSize:'24px', opacity:.6 }}>h</span> {weekMinsRem}<span style={{ fontSize:'24px', opacity:.6 }}>m</span>
+              </p>
+              <div style={{ display:'flex', alignItems:'flex-end', gap:'6px', height:'64px', marginTop:'20px' }}>
+                {bars.map((h, i) => (
+                  <div key={i} style={{ flex:1, borderRadius:'4px 4px 0 0', minHeight:4, height:`${Math.max(4, h)}%`, background:i===6?T.earth:'rgba(212,197,169,.4)' }} />
+                ))}
               </div>
-              <div style={{ height:'6px', borderRadius:'9999px', overflow:'hidden', background:'#f4efe6' }}>
-                <div style={{ height:'100%', borderRadius:'9999px', width:`${m.l}%`, background:T.terra }} />
+              <div style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', opacity:.45, marginTop:'8px' }}>
+                {LABELS_WEEK.map((l, i) => <span key={i}>{l}</span>)}
               </div>
+            </>
+          ) : (
+            <div style={{ paddingTop:8, paddingBottom:8 }}>
+              <p style={{ fontFamily:'sans-serif', fontSize:'32px', opacity:.35 }}>0h 0m</p>
+              <p style={{ fontSize:'12px', opacity:.6, marginTop:8, lineHeight:1.6 }}>
+                Completa la tua prima sessione per vedere i pattern.
+              </p>
             </div>
-          ))}
+          )
+        ) : (
+          <p style={{ fontSize:'13px', opacity:.65, lineHeight:1.6, marginTop:4 }}>
+            Continua a usare Sereno per vedere i tuoi pattern nel tempo.
+          </p>
+        )}
+      </div>
+
+      {/* Streak card */}
+      <div style={{ borderRadius:'24px', padding:'20px', marginBottom:'16px', background:'white' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px' }}>
+          <Flame size={16} style={{ color:T.terra }} />
+          <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', fontWeight:500, color:'#5a5a3e' }}>La tua serie</p>
+        </div>
+        {streak > 0 ? (
+          <div style={{ display:'flex', alignItems:'baseline', gap:8 }}>
+            <p style={{ fontFamily:'sans-serif', fontSize:'48px', color:T.green, margin:0 }}>{streak}</p>
+            <p style={{ fontSize:'14px', color:T.muted }}>giorni consecutivi</p>
+          </div>
+        ) : (
+          <p style={{ fontSize:'14px', lineHeight:1.6, color:T.muted }}>
+            Inizia oggi la tua prima sessione per avviare la serie.
+          </p>
+        )}
+      </div>
+
+      {/* Today card */}
+      <div style={{ borderRadius:'24px', padding:'20px', marginBottom:'16px', background:'white' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px' }}>
+          <Sun size={16} style={{ color:T.terra }} />
+          <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', fontWeight:500, color:'#5a5a3e' }}>Oggi</p>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div>
+            <p style={{ fontFamily:'sans-serif', fontSize:'28px', color:T.ink, margin:0 }}>{hours}h {mins}m</p>
+            <p style={{ fontSize:'12px', color:T.muted, marginTop:2 }}>recuperati</p>
+          </div>
+          <div>
+            <p style={{ fontFamily:'sans-serif', fontSize:'28px', color:T.ink, margin:0 }}>{opensToday}</p>
+            <p style={{ fontSize:'12px', color:T.muted, marginTop:2 }}>interruzioni</p>
+          </div>
         </div>
       </div>
 
+      {/* Real impact */}
       <div style={{ borderRadius:'24px', padding:'20px', background:`linear-gradient(135deg,${T.terra},#a85f44)`, color:T.cream }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
           <TreePine size={16} />
           <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', fontWeight:500 }}>Impatto reale</p>
         </div>
         <p style={{ fontFamily:'sans-serif', fontSize:'30px', marginBottom:'4px' }}>{realTrees} alberi piantati</p>
-        <p style={{ fontSize:'12px', opacity:0.9 }}>in Madagascar via Eden Reforestation</p>
+        <p style={{ fontSize:'12px', opacity:.9 }}>in Madagascar via Eden Reforestation</p>
       </div>
     </div>
   );
 }
 
-/* ─── MODES ──────────────────────────────────────────────── */
-function Modes({ user, setUser, onOpenFriends }) {
+/* ─── MODES ──────────────────────────────────────────────────── */
+function Modes({ user, setUser, friends = [], onOpenFriends }) {
   const MODES = [
     { id:'lavoro',   Icon:Briefcase, name:'Lavoro profondo', desc:'Blocca social, news, video · Permetti Slack, Mail', time:'9:00–12:30',  color:T.greenMid },
     { id:'famiglia', Icon:Heart,     name:'Famiglia',         desc:'Solo chiamate e messaggi essenziali',                time:'19:00–21:30', color:T.terra },
@@ -931,7 +1086,7 @@ function Modes({ user, setUser, onOpenFriends }) {
   ];
 
   return (
-    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, overflowY:'auto', MsOverflowStyle:'none', scrollbarWidth:'none', paddingLeft:'24px', paddingRight:'24px', paddingTop:'8px', color:T.cream, paddingBottom:110 }}>
+    <div className="scroll" style={{ position:'absolute', top:0, right:0, bottom:0, left:0, overflowY:'auto', paddingLeft:'24px', paddingRight:'24px', paddingTop:'8px', color:T.cream, paddingBottom:110 }}>
       <div style={{ marginBottom:'20px' }}>
         <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', opacity:0.6 }}>Scegli un'intenzione</p>
         <h1 style={{ fontFamily:'sans-serif', fontSize:'30px', marginTop:'4px' }}>Modalità</h1>
@@ -940,7 +1095,7 @@ function Modes({ user, setUser, onOpenFriends }) {
       {MODES.map(({ id, Icon, name, desc, time, color }) => {
         const active = user.activeMode === id;
         return (
-          <button key={id} onClick={() => setUser({...user, activeMode:id})}
+          <button key={id} onClick={() => setUser({ ...user, activeMode: id })}
             style={{ width:'100%', textAlign:'left', marginBottom:'12px', borderRadius:'24px', padding:'20px', background:active?color:'rgba(255,255,255,.08)', color:active?T.ink:T.cream, border:'none', cursor:'pointer' }}>
             <div style={{ display:'flex', alignItems:'flex-start', gap:'16px' }}>
               <div style={{ width:'44px', height:'44px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, background:active?'rgba(45,58,46,.15)':'rgba(255,255,255,.08)' }}>
@@ -963,6 +1118,7 @@ function Modes({ user, setUser, onOpenFriends }) {
         <Plus size={14} /> Crea modalità
       </button>
 
+      {/* Friends section - real data */}
       <div style={{ borderRadius:'24px', padding:'20px', background:'rgba(255,255,255,.08)' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'12px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
@@ -973,50 +1129,57 @@ function Modes({ user, setUser, onOpenFriends }) {
             Vedi tutti <ChevronRight size={11} />
           </button>
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px' }}>
-          {['🌳','🌿','🌸'].map((e,i)=>(
-            <div key={i} style={{ width:'36px', height:'36px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'16px', background:'rgba(255,255,255,.1)' }}>{e}</div>
-          ))}
-          <span style={{ fontSize:'12px', opacity:0.7, marginLeft:'4px' }}>Sofia, Marco, Elena</span>
-        </div>
-        <p style={{ fontSize:'12px', opacity:0.75, lineHeight:1.5, marginBottom:'12px' }}>
-          Sofia ha completato 5 giorni. Inviale un gesto gentile.
-        </p>
+        {friends.length > 0 ? (
+          <>
+            <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'12px' }}>
+              {friends.slice(0, 3).map(f => (
+                <div key={f.id} style={{ width:'36px', height:'36px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'16px', background:'rgba(255,255,255,.1)' }}>{f.avatar}</div>
+              ))}
+              {friends.length > 3 && (
+                <span style={{ fontSize:'12px', opacity:.6 }}>+{friends.length - 3} altri</span>
+              )}
+            </div>
+            <p style={{ fontSize:'12px', opacity:0.75, lineHeight:1.5, marginBottom:'12px' }}>
+              {friends[0]?.name} e {friends.length > 1 ? `altri ${friends.length - 1}` : 'te'} state crescendo insieme.
+            </p>
+          </>
+        ) : (
+          <p style={{ fontSize:'12px', opacity:.65, lineHeight:1.5, marginBottom:'12px' }}>
+            Invita un amico per crescere insieme e piantare alberi reali.
+          </p>
+        )}
         <button onClick={onOpenFriends}
           style={{ fontSize:'12px', padding:'6px 12px', borderRadius:'9999px', fontWeight:500, background:T.cream, color:T.ink, border:'none', cursor:'pointer' }}>
-          Invia 🐝 →
+          {friends.length > 0 ? 'Invia 🐝 →' : 'Invita amici →'}
         </button>
       </div>
     </div>
   );
 }
 
-/* ─── SETTINGS ───────────────────────────────────────────── */
+/* ─── SETTINGS ───────────────────────────────────────────────── */
 function SettingsPanel({ user, setUser, onClose }) {
   const [tog, setTog] = useState({ notif:true, grayscale:true, trees:true, social:false });
   return (
-    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:40, animation:'slide-up .35s cubic-bezier(.22,1,.36,1) forwards', background:T.cream }}>
+    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:40, background:T.cream }} className="slide-up">
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingLeft:'24px', paddingRight:'24px', paddingTop:'48px', paddingBottom:'16px' }}>
         <h2 style={{ fontFamily:'sans-serif', fontSize:'24px', color:T.ink }}>Impostazioni</h2>
         <button onClick={onClose} style={{ width:'36px', height:'36px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', background:'rgba(45,58,46,.06)', border:'none', cursor:'pointer' }}>
           <X size={16} style={{ color:T.ink }} />
         </button>
       </div>
-
-      <div style={{ paddingLeft:'24px', paddingRight:'24px', display:'flex', flexDirection:'column', gap:'16px', overflowY:'auto', MsOverflowStyle:'none', scrollbarWidth:'none', height:'calc(100% - 100px)' }}>
+      <div className="scroll" style={{ paddingLeft:'24px', paddingRight:'24px', display:'flex', flexDirection:'column', gap:'16px', overflowY:'auto', height:'calc(100% - 100px)' }}>
         <div style={{ borderRadius:'16px', padding:'16px', background:'white' }}>
           <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', marginBottom:'8px', color:T.muted }}>Profilo</p>
           <p style={{ fontFamily:'sans-serif', fontSize:'18px', color:T.ink }}>{user.name || 'Amico'}</p>
-          <p style={{ fontSize:'12px', color:T.muted }}>Iscritto oggi</p>
         </div>
-
         <div style={{ borderRadius:'16px', padding:'16px', background:'white' }}>
           <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', marginBottom:'12px', color:T.muted }}>Intensità</p>
           <div style={{ display:'flex', gap:'8px', padding:'4px', borderRadius:'9999px', background:'rgba(45,58,46,.06)' }}>
             {['gentle','balanced','strict'].map(id => {
-              const labels = {gentle:'Gentile',balanced:'Bilanciato',strict:'Determinato'};
+              const labels = { gentle:'Gentile', balanced:'Bilanciato', strict:'Determinato' };
               return (
-                <button key={id} onClick={() => setUser({...user,intensity:id})}
+                <button key={id} onClick={() => setUser({ ...user, intensity: id })}
                   style={{ flex:1, padding:'8px 0', fontSize:'12px', fontWeight:500, borderRadius:'9999px', background:user.intensity===id?T.green:'transparent', color:user.intensity===id?T.cream:T.muted, border:'none', cursor:'pointer' }}>
                   {labels[id]}
                 </button>
@@ -1024,17 +1187,15 @@ function SettingsPanel({ user, setUser, onClose }) {
             })}
           </div>
           <p style={{ fontSize:'12px', marginTop:'12px', color:T.muted }}>
-            {user.intensity==='gentle' ? '1 respiro, sempre passabile.' :
-             user.intensity==='balanced'? '3 respiri, riflessione.' : '5 respiri, blocco hard.'}
+            {user.intensity === 'gentle' ? '1 respiro, sempre passabile.' : user.intensity === 'balanced' ? '3 respiri, riflessione.' : '5 respiri, blocco hard.'}
           </p>
         </div>
-
         <div style={{ borderRadius:'16px', background:'white' }}>
           {[
-            { k:'notif',    Icon:Bell,       label:'Notifiche gentili',    sub:'Reminder quotidiani' },
-            { k:'grayscale',Icon:Smartphone, label:'Grayscale automatico', sub:'In modalità Sonno' },
-            { k:'trees',    Icon:TreePine,   label:'Pianta alberi reali',  sub:'Via Eden Reforestation' },
-            { k:'social',   Icon:Users,      label:'Giardino condiviso',   sub:'Visibile agli amici' },
+            { k:'notif',     Icon:Bell,       label:'Notifiche gentili',    sub:'Reminder quotidiani' },
+            { k:'grayscale', Icon:Smartphone, label:'Grayscale automatico', sub:'In modalità Sonno' },
+            { k:'trees',     Icon:TreePine,   label:'Pianta alberi reali',  sub:'Via Eden Reforestation' },
+            { k:'social',    Icon:Users,      label:'Giardino condiviso',   sub:'Visibile agli amici' },
           ].map(({ k, Icon, label, sub }, idx) => (
             <div key={k} style={{ display:'flex', alignItems:'center', gap:'12px', padding:'16px', borderTop:idx>0?'1px solid rgba(0,0,0,.05)':'none' }}>
               <Icon size={18} style={{ color:T.muted }} />
@@ -1042,14 +1203,13 @@ function SettingsPanel({ user, setUser, onClose }) {
                 <p style={{ fontSize:'14px', color:T.ink }}>{label}</p>
                 <p style={{ fontSize:'12px', color:T.muted }}>{sub}</p>
               </div>
-              <button onClick={() => setTog({...tog,[k]:!tog[k]})}
+              <button onClick={() => setTog({ ...tog, [k]: !tog[k] })}
                 style={{ width:'40px', height:'24px', borderRadius:'9999px', padding:'2px', background:tog[k]?T.green:'rgba(45,58,46,.15)', border:'none', cursor:'pointer' }}>
                 <div style={{ width:'20px', height:'20px', borderRadius:'50%', background:'white', transform:tog[k]?'translateX(16px)':'translateX(0)', transition:'transform .2s' }} />
               </button>
             </div>
           ))}
         </div>
-
         <div style={{ textAlign:'center', padding:'16px 0' }}>
           <p style={{ fontFamily:'sans-serif', fontSize:'16px', color:T.green }}>Sereno</p>
           <p style={{ fontSize:'12px', marginTop:'4px', color:T.muted }}>v1.0 · Open source · Made with care</p>
@@ -1059,7 +1219,7 @@ function SettingsPanel({ user, setUser, onClose }) {
   );
 }
 
-/* ─── MODE SHEET ─────────────────────────────────────────── */
+/* ─── MODE SHEET ─────────────────────────────────────────────── */
 function ModeSheet({ user, setUser, onClose }) {
   const opts = [
     { id:'lavoro',   Icon:Briefcase, label:'Lavoro' },
@@ -1068,19 +1228,16 @@ function ModeSheet({ user, setUser, onClose }) {
     { id:'libero',   Icon:Wind,      label:'Libero' },
   ];
   return (
-    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:40, display:'flex', alignItems:'flex-end' }}
-      onClick={onClose}>
+    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:40, display:'flex', alignItems:'flex-end' }} onClick={onClose}>
       <div style={{ background:'rgba(0,0,0,.32)', position:'absolute', top:0, right:0, bottom:0, left:0 }} />
-      <div style={{ width:'100%', borderRadius:'24px 24px 0 0', padding:'24px', animation:'slide-up .35s cubic-bezier(.22,1,.36,1) forwards', background:T.cream, position:'relative', zIndex:1 }}
-        onClick={e=>e.stopPropagation()}>
+      <div style={{ width:'100%', borderRadius:'24px 24px 0 0', padding:'24px', background:T.cream, position:'relative', zIndex:1 }} className="slide-up" onClick={e => e.stopPropagation()}>
         <div style={{ width:'40px', height:'4px', borderRadius:'9999px', margin:'0 auto 16px', background:'rgba(45,58,46,.15)' }} />
         <p style={{ fontFamily:'sans-serif', fontSize:'20px', marginBottom:'16px', color:T.ink }}>Cambia modalità</p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
           {opts.map(({ id, Icon, label }) => {
             const sel = user.activeMode === id;
             return (
-              <button key={id}
-                onClick={() => { setUser({...user,activeMode:id}); onClose(); }}
+              <button key={id} onClick={() => { setUser({ ...user, activeMode: id }); onClose(); }}
                 style={{ borderRadius:'16px', padding:'16px', textAlign:'left', borderWidth:'2px', borderStyle:'solid', background:sel?T.green:'white', color:sel?T.cream:T.ink, borderColor:sel?T.green:'rgba(45,58,46,.08)', cursor:'pointer' }}>
                 <Icon size={18} style={{ marginBottom:8 }} />
                 <p style={{ fontSize:'14px', fontWeight:500 }}>{label}</p>
@@ -1093,7 +1250,7 @@ function ModeSheet({ user, setUser, onClose }) {
   );
 }
 
-/* ─── FRIENDS MODAL ──────────────────────────────────────── */
+/* ─── FRIENDS MODAL ──────────────────────────────────────────── */
 const GIFTS = [
   { id:'bee',       emoji:'🐝', label:"Un'ape",      msg:'Per nutrire la tua foresta' },
   { id:'butterfly', emoji:'🦋', label:'Una farfalla', msg:'Per la grazia che mostri' },
@@ -1101,27 +1258,25 @@ const GIFTS = [
   { id:'seed',      emoji:'🌱', label:'Un seme',      msg:'Per il tuo nuovo inizio' },
 ];
 
-function FriendsModal({ friends=[], onClose }) {
+function FriendsModal({ friends = [], userName = '', userId = '', onClose }) {
   const [tab,       setTab]       = useState('amici');
   const [beeTarget, setBeeTarget] = useState(null);
   const [sent,      setSent]      = useState([]);
 
-  const leaderboard = [...friends].sort((a,b)=>b.streak-a.streak);
+  const leaderboard  = [...friends].sort((a, b) => b.streak - a.streak);
+  const shortId      = userId.slice(0, 4).toUpperCase() || 'XXXX';
+  const inviteCode   = `SERENO-${(userName || 'AMICO').toUpperCase().slice(0, 8)}-${shortId}`;
 
-  const sendGift = (friendId) => {
-    setSent(s=>[...s, friendId]);
+  const sendGift = friendId => {
+    setSent(s => [...s, friendId]);
     setBeeTarget(null);
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) {
-        supabase.from('gifts').insert({
-          from_id: user.id, to_id: friendId, gift_type: 'bee'
-        }).then(({ error }) => { if (error) console.error(error); });
-      }
+      if (user) supabase.from('gifts').insert({ from_id: user.id, to_id: friendId, gift_type: 'bee' });
     });
   };
 
   return (
-    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:40, animation:'slide-up .35s cubic-bezier(.22,1,.36,1) forwards', background:T.cream }}>
+    <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:40, background:T.cream }} className="slide-up">
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', paddingLeft:'24px', paddingRight:'24px', paddingTop:'48px', paddingBottom:'12px' }}>
         <div>
           <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', color:T.muted }}>La tua rete</p>
@@ -1152,36 +1307,31 @@ function FriendsModal({ friends=[], onClose }) {
         </div>
       </div>
 
-      <div style={{ paddingLeft:'24px', paddingRight:'24px', overflowY:'auto', MsOverflowStyle:'none', scrollbarWidth:'none', paddingBottom:'32px', height:'calc(100% - 180px)' }}>
+      <div className="scroll" style={{ paddingLeft:'24px', paddingRight:'24px', overflowY:'auto', paddingBottom:'32px', height:'calc(100% - 180px)' }}>
 
-        {tab==='amici' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:'8px', animation:'fade-up .45s ease-out forwards' }}>
-            {friends.map(f => {
+        {tab === 'amici' && (
+          <div className="fade-up" style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+            {friends.length === 0 ? (
+              <div style={{ textAlign:'center', padding:'40px 0' }}>
+                <p style={{ fontSize:'32px', marginBottom:12 }}>🌱</p>
+                <p style={{ fontSize:'14px', color:T.muted, lineHeight:1.6 }}>Nessun amico ancora.<br/>Vai su "Invita" per iniziare.</p>
+              </div>
+            ) : friends.map(f => {
               const isSent = sent.includes(f.id);
               return (
                 <div key={f.id} style={{ borderRadius:'16px', padding:'16px', background:'white' }}>
                   <div style={{ display:'flex', alignItems:'flex-start', gap:'12px' }}>
                     <div style={{ position:'relative', width:'48px', height:'48px', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px', flexShrink:0, background:`${f.color}22` }}>
                       {f.avatar}
-                      {f.online && (
-                        <div style={{ position:'absolute', bottom:'-2px', right:'-2px', width:'12px', height:'12px', borderRadius:'50%', border:'2px solid white', background:'#4ade80' }} />
-                      )}
                     </div>
                     <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'2px' }}>
-                        <p style={{ fontWeight:500, fontSize:'14px', color:T.ink }}>{f.name}</p>
-                        {f.badge && <span style={{ fontSize:'12px' }}>{f.badge}</span>}
-                      </div>
-                      <p style={{ fontSize:'12px', marginBottom:'8px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:T.muted }}>{f.status}</p>
+                      <p style={{ fontWeight:500, fontSize:'14px', color:T.ink, marginBottom:2 }}>{f.name}</p>
                       <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
                         <span style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', color:T.ink }}>
                           <Flame size={10} style={{ color:T.terra }} />{f.streak}g
                         </span>
                         <span style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', color:T.ink }}>
                           <TreePine size={10} style={{ color:T.green }} />{f.trees}
-                        </span>
-                        <span style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', color:T.muted }}>
-                          <Clock size={10} />{f.hrs}h
                         </span>
                       </div>
                     </div>
@@ -1196,46 +1346,41 @@ function FriendsModal({ friends=[], onClose }) {
           </div>
         )}
 
-        {tab==='classifica' && (
-          <div style={{ animation:'fade-up .45s ease-out forwards' }}>
-            <p style={{ fontSize:'12px', marginBottom:'16px', color:T.muted }}>Settimana corrente · per streak</p>
-            <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
-              {leaderboard.map((f,i) => (
-                <div key={f.id} style={{ borderRadius:'16px', padding:'14px', display:'flex', alignItems:'center', gap:'12px', background:i===0?`linear-gradient(135deg,${T.terra},#a85f44)`:'white', color:i===0?T.cream:T.ink }}>
-                  <div style={{ width:'28px', height:'28px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'sans-serif', fontSize:'14px', fontWeight:600, background:i===0?'rgba(244,239,230,.2)':i<3?'rgba(45,58,46,.08)':'transparent', color:i===0?T.cream:i<3?T.ink:T.muted }}>
-                    {i+1}
-                  </div>
-                  <div style={{ width:'36px', height:'36px', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px', background:i===0?'rgba(244,239,230,.18)':`${f.color}22` }}>
-                    {f.avatar}
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontSize:'14px', fontWeight:500 }}>{f.name}</p>
-                    <p style={{ fontSize:'11px', opacity:0.7 }}>{f.hrs}h recuperate</p>
-                  </div>
-                  <div style={{ textAlign:'right' }}>
-                    <p style={{ fontFamily:'sans-serif', fontSize:'18px', lineHeight:1 }}>{f.streak}</p>
-                    <p style={{ fontSize:'9px', textTransform:'uppercase', letterSpacing:'0.05em', opacity:0.65 }}>giorni</p>
-                  </div>
+        {tab === 'classifica' && (
+          <div className="fade-up">
+            {friends.length === 0 ? (
+              <p style={{ fontSize:'13px', color:T.muted, textAlign:'center', padding:'40px 0', lineHeight:1.6 }}>
+                Aggiungi amici per vedere la classifica.
+              </p>
+            ) : (
+              <>
+                <p style={{ fontSize:'12px', marginBottom:'16px', color:T.muted }}>Settimana corrente · per streak</p>
+                <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+                  {leaderboard.map((f, i) => (
+                    <div key={f.id} style={{ borderRadius:'16px', padding:'14px', display:'flex', alignItems:'center', gap:'12px', background:i===0?`linear-gradient(135deg,${T.terra},#a85f44)`:'white', color:i===0?T.cream:T.ink }}>
+                      <div style={{ width:'28px', height:'28px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'sans-serif', fontSize:'14px', fontWeight:600, background:i===0?'rgba(244,239,230,.2)':i<3?'rgba(45,58,46,.08)':'transparent' }}>
+                        {i + 1}
+                      </div>
+                      <div style={{ width:'36px', height:'36px', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px', background:i===0?'rgba(244,239,230,.18)':`${f.color}22` }}>
+                        {f.avatar}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <p style={{ fontSize:'14px', fontWeight:500 }}>{f.name}</p>
+                      </div>
+                      <div style={{ textAlign:'right' }}>
+                        <p style={{ fontFamily:'sans-serif', fontSize:'18px', lineHeight:1 }}>{f.streak}</p>
+                        <p style={{ fontSize:'9px', textTransform:'uppercase', letterSpacing:'0.05em', opacity:0.65 }}>giorni</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div style={{ marginTop:'12px', borderRadius:'16px', padding:'14px', display:'flex', alignItems:'center', gap:'12px', background:T.green, color:T.cream }}>
-              <div style={{ width:'28px', height:'28px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'sans-serif', fontSize:'14px', fontWeight:600, background:'rgba(244,239,230,.15)' }}>3</div>
-              <div style={{ width:'36px', height:'36px', borderRadius:'12px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'18px', background:'rgba(244,239,230,.15)' }}>🌳</div>
-              <div style={{ flex:1 }}>
-                <p style={{ fontSize:'14px', fontWeight:500 }}>Tu</p>
-                <p style={{ fontSize:'11px', opacity:0.7 }}>14.5h recuperate</p>
-              </div>
-              <div style={{ textAlign:'right' }}>
-                <p style={{ fontFamily:'sans-serif', fontSize:'18px', lineHeight:1 }}>12</p>
-                <p style={{ fontSize:'9px', textTransform:'uppercase', letterSpacing:'0.05em', opacity:0.65 }}>giorni</p>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         )}
 
-        {tab==='invita' && (
-          <div style={{ animation:'fade-up .45s ease-out forwards' }}>
+        {tab === 'invita' && (
+          <div className="fade-up">
             <div style={{ borderRadius:'24px', padding:'20px', marginBottom:'16px', textAlign:'center', background:`linear-gradient(135deg,${T.green},${T.greenDark})`, color:T.cream }}>
               <div style={{ width:'64px', height:'64px', borderRadius:'50%', margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'24px', background:'rgba(244,239,230,.1)' }}>🌱</div>
               <p style={{ fontFamily:'sans-serif', fontSize:'20px', marginBottom:'8px' }}>Cresciamo insieme</p>
@@ -1244,46 +1389,31 @@ function FriendsModal({ friends=[], onClose }) {
               </p>
               <div style={{ borderRadius:'12px', padding:'12px', marginBottom:'12px', background:'rgba(244,239,230,.1)' }}>
                 <p style={{ fontSize:'10px', textTransform:'uppercase', letterSpacing:'0.16em', opacity:0.6, marginBottom:'4px' }}>Il tuo codice</p>
-                <p style={{ fontFamily:'sans-serif', fontSize:'24px', letterSpacing:'.2em' }}>SERENO-LUCA-7</p>
+                <p style={{ fontFamily:'sans-serif', fontSize:'20px', letterSpacing:'.15em' }}>{inviteCode}</p>
               </div>
               <button style={{ width:'100%', borderRadius:'12px', padding:'12px 0', fontSize:'14px', fontWeight:500, background:T.earth, color:T.green, border:'none', cursor:'pointer' }}>
                 Condividi invito
               </button>
             </div>
-
-            <div style={{ borderRadius:'16px', padding:'16px', marginBottom:'12px', background:'white' }}>
+            <div style={{ borderRadius:'16px', padding:'16px', background:'white' }}>
               <p style={{ fontSize:'12px', textTransform:'uppercase', letterSpacing:'0.16em', marginBottom:'12px', color:T.muted }}>Come funziona</p>
               <div style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
-                {[
-                  'Condividi il codice con un amico',
-                  'Si iscrive e collega il suo giardino al tuo',
-                  'Vedete i progressi reciproci e vi mandate gesti',
-                  'Insieme piantate alberi reali via Eden',
-                ].map((s,i)=>(
+                {['Condividi il codice con un amico', 'Si iscrive e collega il suo giardino al tuo', 'Vedete i progressi reciproci e vi mandate gesti', 'Insieme piantate alberi reali via Eden'].map((s, i) => (
                   <div key={i} style={{ display:'flex', alignItems:'flex-start', gap:'12px' }}>
-                    <div style={{ width:'24px', height:'24px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'12px', fontWeight:500, flexShrink:0, background:`${T.terra}20`, color:T.terra }}>{i+1}</div>
+                    <div style={{ width:'24px', height:'24px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'12px', fontWeight:500, flexShrink:0, background:`${T.terra}20`, color:T.terra }}>{i + 1}</div>
                     <p style={{ fontSize:'12px', lineHeight:1.6, paddingTop:'2px', color:T.ink }}>{s}</p>
                   </div>
                 ))}
               </div>
-            </div>
-
-            <div style={{ borderRadius:'16px', padding:'12px', display:'flex', alignItems:'center', gap:'8px', background:'rgba(201,123,92,.08)' }}>
-              <Sparkles size={14} style={{ color:T.terra, flexShrink:0 }} />
-              <p style={{ fontSize:'11px', lineHeight:1.6, color:T.ink }}>
-                Quando entrambi raggiungete 7 giorni, Sereno pianta un albero extra a vostro nome.
-              </p>
             </div>
           </div>
         )}
       </div>
 
       {beeTarget && (
-        <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:50, display:'flex', alignItems:'flex-end' }}
-          onClick={() => setBeeTarget(null)}>
+        <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, zIndex:50, display:'flex', alignItems:'flex-end' }} onClick={() => setBeeTarget(null)}>
           <div style={{ position:'absolute', top:0, right:0, bottom:0, left:0, background:'rgba(0,0,0,.38)' }} />
-          <div style={{ width:'100%', borderRadius:'24px 24px 0 0', padding:'24px', animation:'slide-up .35s cubic-bezier(.22,1,.36,1) forwards', background:T.cream, position:'relative', zIndex:1 }}
-            onClick={e=>e.stopPropagation()}>
+          <div style={{ width:'100%', borderRadius:'24px 24px 0 0', padding:'24px', background:T.cream, position:'relative', zIndex:1 }} className="slide-up" onClick={e => e.stopPropagation()}>
             <div style={{ width:'40px', height:'4px', borderRadius:'9999px', margin:'0 auto 16px', background:'rgba(45,58,46,.15)' }} />
             <div style={{ textAlign:'center', marginBottom:'20px' }}>
               <div style={{ width:'56px', height:'56px', borderRadius:'12px', margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'32px', background:`${beeTarget.color}22` }}>{beeTarget.avatar}</div>
