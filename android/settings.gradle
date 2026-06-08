@@ -6,16 +6,8 @@ pluginManagement {
     }
 }
 
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
 
 rootProject.name = "Sereno"
 
 include ':app'
-include ':capacitor-android'
-project(':capacitor-android').projectDir = new File('./capacitor-android')
+apply from: 'capacitor.settings.gradle'
